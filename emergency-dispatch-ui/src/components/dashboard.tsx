@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useRef } from "react"
+import { useEffect, useState, useRef, useCallback } from "react"
 import { LeafletMap } from "./leaflet-map" // Import the new Leaflet map component
 import { EmergencyPanel } from "./emergency-panel"
 import { AmbulancePanel } from "./ambulance-panel"
@@ -12,11 +12,16 @@ import {
   fetchControlStatus,
   fetchEmergencyCalls,
   fetchLocations,
+  resetControl,
+  stopControl,
   fetchNextEmergency,
+  stopSimulation,
 } from "@/services/api"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { AutoDispatchPanel } from "./auto-dispatch-panel"
-import { toast } from 'sonner'
+import { toast } from "sonner"
+import { logger } from "./logger"
+import { Card, CardContent } from "@/components/ui/card"
 
 export default function Dashboard() {
   const [locations, setLocations] = useState<Location[]>([])
@@ -29,7 +34,10 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null)
   const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(null)
   const [isSimulationRunning, setIsSimulationRunning] = useState(false)
-  
+  const [isAutoDispatch, setIsAutoDispatch] = useState(false)
+  const [activeTab, setActiveTab] = useState("manual")
+  const [isStoppingSimulation, setIsStoppingSimulation] = useState(false)
+
   // Local progress tracking
   const [totalDispatched, setTotalDispatched] = useState(0)
   const [totalDistance, setTotalDistance] = useState(0)
@@ -37,8 +45,22 @@ export default function Dashboard() {
   const [elapsedTime, setElapsedTime] = useState("00:00:00")
   const timerRef = useRef<NodeJS.Timeout | null>(null)
 
+  // Recovery state
+  const [recoveryState, setRecoveryState] = useState<{
+    isRecovering: boolean
+    lastState?: {
+      seed: string
+      targetDispatches: number
+      maxActiveCalls: number
+      totalDispatched: number
+      totalDistance: number
+      startTime: string
+      isAutoDispatch: boolean
+    }
+  }>({ isRecovering: false })
+
   // Fetch all data including emergencies queue
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const [locationsData, ambulancesData, statusData] = await Promise.all([
         fetchLocations(),
@@ -47,70 +69,131 @@ export default function Dashboard() {
       ])
 
       // Use type assertion to resolve type conflicts
-      setLocations(locationsData as unknown as Location[])
+      setLocations(locationsData as any)
       setAmbulances(ambulancesData)
       setStatus(statusData)
-      
+
       // Check if simulation is running based on status
       const isRunning = statusData?.status === "Running"
       setIsSimulationRunning(isRunning)
-      
+
       // Update local progress from status
       if (statusData) {
         setTotalDispatched(statusData.totalDispatches)
         setTotalDistance(statusData.distance)
       }
-      
+
       setIsLoading(false)
+      // Clear any previous errors when we successfully fetch data
+      setError(null)
+
+      // Log successful data fetch
+      logger.info("Data fetched successfully", {
+        ambulancesCount: ambulancesData.length,
+        locationsCount: locationsData.length,
+        simulationStatus: statusData?.status,
+      })
+
+      return true
     } catch (err) {
-      setError("Failed to fetch data. Please check if the API server is running.")
+      // Only set error if we're in a running simulation
+      if (isSimulationRunning) {
+        const errorMessage = "Failed to fetch data. Please check if the API server is running."
+        setError(errorMessage)
+
+        // Log the error
+        logger.error("Error fetching data", { error: err })
+
+        // Show toast notification for the error
+        toast.error("Connection Error", {
+          description: errorMessage,
+          duration: 5000,
+        })
+      }
+
       setIsLoading(false)
-      console.error(err)
+      return false
     }
-  }
+  }, [isSimulationRunning])
 
   // Separate function to fetch emergencies queue
-  const fetchEmergenciesQueue = async () => {
+  const fetchEmergenciesQueue = useCallback(async () => {
     try {
       const emergenciesData = await fetchEmergencyCalls()
+
+      // Update the emergencies state
       setEmergencies(emergenciesData)
+
+      // If we have a selected emergency, check if it needs to be updated
+      if (selectedEmergency) {
+        const updatedEmergency = emergenciesData.find(
+          (e) => e.city === selectedEmergency.city && e.county === selectedEmergency.county,
+        )
+
+        if (updatedEmergency) {
+          // Update the selected emergency with the latest data
+          setSelectedEmergency(updatedEmergency)
+        } else {
+          // If the emergency is no longer in the queue, deselect it
+          setSelectedEmergency(null)
+        }
+      }
+
+      logger.info("Emergencies queue fetched", { count: emergenciesData.length })
     } catch (err) {
-      console.error("Failed to fetch emergencies queue:", err)
+      logger.error("Failed to fetch emergencies queue", { error: err })
+      toast.error("Error", {
+        description: "Failed to fetch emergencies queue",
+        duration: 3000,
+      })
     }
-  }
+  }, [selectedEmergency])
 
   // Start timer for tracking elapsed time
-  const startTimer = () => {
+  const startTimer = useCallback(() => {
     if (timerRef.current) {
       clearInterval(timerRef.current)
     }
-    
-    setStartTime(new Date())
-    
+
+    const now = new Date()
+    setStartTime(now)
+
+    // Save start time to localStorage for recovery
+    localStorage.setItem("simulationStartTime", now.toISOString())
+
     timerRef.current = setInterval(() => {
       if (startTime) {
         const now = new Date()
         const diff = now.getTime() - startTime.getTime()
-        
+
         // Format elapsed time as HH:MM:SS
-        const hours = Math.floor(diff / 3600000).toString().padStart(2, '0')
-        const minutes = Math.floor((diff % 3600000) / 60000).toString().padStart(2, '0')
-        const seconds = Math.floor((diff % 60000) / 1000).toString().padStart(2, '0')
-        
+        const hours = Math.floor(diff / 3600000)
+          .toString()
+          .padStart(2, "0")
+        const minutes = Math.floor((diff % 3600000) / 60000)
+          .toString()
+          .padStart(2, "0")
+        const seconds = Math.floor((diff % 60000) / 1000)
+          .toString()
+          .padStart(2, "0")
+
         setElapsedTime(`${hours}:${minutes}:${seconds}`)
       }
     }, 1000)
-  }
+  }, [startTime])
 
   // Stop timer
-  const stopTimer = () => {
+  const stopTimer = useCallback(() => {
     if (timerRef.current) {
       clearInterval(timerRef.current)
       timerRef.current = null
     }
-  }
 
-  const startRefreshInterval = () => {
+    // Clear the saved start time
+    localStorage.removeItem("simulationStartTime")
+  }, [])
+
+  const startRefreshInterval = useCallback(() => {
     if (refreshInterval) {
       clearInterval(refreshInterval)
     }
@@ -120,88 +203,345 @@ export default function Dashboard() {
       fetchData()
       fetchEmergenciesQueue() // Specifically fetch emergencies queue
     }, 2000)
-    
-    setRefreshInterval(interval)
-  }
 
-  const stopRefreshInterval = () => {
+    setRefreshInterval(interval)
+  }, [fetchData, fetchEmergenciesQueue, refreshInterval])
+
+  const stopRefreshInterval = useCallback(() => {
     if (refreshInterval) {
       clearInterval(refreshInterval)
       setRefreshInterval(null)
     }
-  }
+  }, [refreshInterval])
 
-  const handleReset = async (_seed: string, _targetDispatches: number, _maxActiveCalls: number) => {
-    try {
-      setIsLoading(true)
-      
-      // Reset local progress tracking
-      setTotalDispatched(0)
-      setTotalDistance(0)
-      startTimer()
-      
-      await fetchData()
-      await fetchEmergenciesQueue() // Initial fetch of emergencies
-      startRefreshInterval()
-      setIsSimulationRunning(true)
-    } catch (err) {
-      setError("Failed to reset control. Please check if the API server is running.")
-      console.error(err)
-    } finally {
-      setIsLoading(false)
-    }
-  }
+  // Save simulation state to localStorage
+  const saveSimulationState = useCallback(
+    (seed: string, targetDispatches: number, maxActiveCalls: number, isAuto = false) => {
+      const state = {
+        seed,
+        targetDispatches,
+        maxActiveCalls,
+        totalDispatched,
+        totalDistance,
+        startTime: startTime ? startTime.toISOString() : new Date().toISOString(),
+        isRunning: true,
+        isAutoDispatch: isAuto,
+        lastUpdated: new Date().toISOString(),
+      }
 
-  const handleStop = async () => {
+      localStorage.setItem("simulationState", JSON.stringify(state))
+      logger.info("Simulation state saved", { state })
+    },
+    [totalDispatched, totalDistance, startTime],
+  )
+
+  // Clear saved simulation state
+  const clearSimulationState = useCallback(() => {
+    localStorage.removeItem("simulationState")
+    localStorage.removeItem("recoveryNotificationShown")
+    logger.info("Simulation state cleared")
+  }, [])
+
+  const handleReset = useCallback(
+    async (seed: string, targetDispatches: number, maxActiveCalls: number) => {
+      try {
+        // If auto dispatch is running, stop it first
+        if (isAutoDispatch) {
+          await stopSimulation()
+          setIsAutoDispatch(false)
+        }
+
+        setIsLoading(true)
+
+        // Reset local progress tracking
+        setTotalDispatched(0)
+        setTotalDistance(0)
+
+        // Call the reset API
+        const result = await resetControl(seed, targetDispatches, maxActiveCalls)
+
+        if (result) {
+          // Start the timer
+          startTimer()
+
+          // Save the simulation state
+          saveSimulationState(seed, targetDispatches, maxActiveCalls, false)
+
+          // Fetch initial data
+          await fetchData()
+          await fetchEmergenciesQueue() // Initial fetch of emergencies
+
+          // Start the refresh interval
+          startRefreshInterval()
+          setIsSimulationRunning(true)
+
+          logger.info("Manual simulation reset and started", {
+            seed,
+            targetDispatches,
+            maxActiveCalls,
+          })
+        }
+      } catch (err) {
+        const errorMessage = "Failed to reset control. Please check if the API server is running."
+        setError(errorMessage)
+        logger.error("Error resetting simulation", { error: err })
+        toast.error("Error", {
+          description: errorMessage,
+          duration: 5000,
+        })
+      } finally {
+        setIsLoading(false)
+      }
+    },
+    [fetchData, fetchEmergenciesQueue, isAutoDispatch, saveSimulationState, startRefreshInterval, startTimer],
+  )
+
+  const handleStop = useCallback(async () => {
     try {
+      // Set stopping state to prevent multiple stop attempts
+      setIsStoppingSimulation(true)
+
+      // Call the stop API with POST method
+      await stopControl()
+
+      // If auto dispatch is running, stop it too
+      if (isAutoDispatch) {
+        await stopSimulation()
+        setIsAutoDispatch(false)
+      }
+
+      // Stop the timer
       stopTimer()
+
+      // Clear the saved simulation state
+      clearSimulationState()
+
+      // Clear the recovery notification flag
+      localStorage.removeItem("recoveryNotificationShown")
+
+      // Fetch final data
       await fetchData()
       await fetchEmergenciesQueue()
+
+      // Update UI state
       setIsSimulationRunning(false)
       stopRefreshInterval()
-    } catch (err) {
-      setError("Failed to stop control. Please check if the API server is running.")
-      console.error(err)
-    }
-  }
 
-  const handleFetchNext = async () => {
-    try {
-      await fetchNextEmergency()
-      await fetchEmergenciesQueue() // Update emergencies after fetching next
-      toast.success("Fetched next emergency")
+      logger.info("Simulation stopped")
+
+      toast.success("Simulation Stopped", {
+        description: "The simulation has been stopped successfully.",
+      })
     } catch (err) {
-      toast.error("Failed to fetch next emergency")
-      console.error(err)
+      const errorMessage = "Failed to stop control. Please check if the API server is running."
+      setError(errorMessage)
+      logger.error("Error stopping simulation", { error: err })
+
+      toast.error("Error", {
+        description: errorMessage,
+        duration: 5000,
+      })
+    } finally {
+      setIsStoppingSimulation(false)
     }
-  }
+  }, [clearSimulationState, fetchData, fetchEmergenciesQueue, isAutoDispatch, stopRefreshInterval, stopTimer])
+
+  const handleFetchNext = useCallback(async () => {
+    try {
+      // Call the API to fetch the next emergency
+      await fetchNextEmergency()
+
+      // Update the emergencies queue
+      await fetchEmergenciesQueue()
+
+      logger.info("Fetched next emergency")
+      toast.success("New Emergency", {
+        description: "Fetched next emergency successfully",
+      })
+    } catch (err) {
+      logger.error("Failed to fetch next emergency", { error: err })
+      toast.error("Error", {
+        description: "Failed to fetch next emergency. Please try again.",
+      })
+    }
+  }, [fetchEmergenciesQueue])
 
   const handleEmergencySelect = (emergency: EmergencyCall) => {
     setSelectedEmergency(emergency)
+    logger.debug("Emergency selected", {
+      city: emergency.city,
+      county: emergency.county,
+      needed: emergency.requests.reduce((sum, req) => sum + req.Quantity, 0),
+    })
   }
 
   const handleAmbulanceSelect = (ambulance: AmbulanceLocation) => {
     setSelectedAmbulance(ambulance)
+    logger.debug("Ambulance selected", {
+      city: ambulance.city,
+      county: ambulance.county,
+      available: ambulance.quantity,
+    })
   }
 
-  const handleDispatchSuccess = async (_from: string, _to: string, quantity: number, distance: number) => {
+  const handleDispatchSuccess = async (from: string, to: string, quantity: number, distance: number) => {
     // Update local progress tracking
-    setTotalDispatched(prev => prev + quantity)
-    setTotalDistance(prev => prev + distance)
-    
+    setTotalDispatched((prev) => prev + quantity)
+    setTotalDistance((prev) => prev + distance)
+
+    // Save updated state to localStorage
+    const state = JSON.parse(localStorage.getItem("simulationState") || "{}")
+    if (state.isRunning) {
+      state.totalDispatched = totalDispatched + quantity
+      state.totalDistance = totalDistance + distance
+      state.lastUpdated = new Date().toISOString()
+      localStorage.setItem("simulationState", JSON.stringify(state))
+    }
+
+    // Log the dispatch
+    logger.info("Ambulance dispatched", {
+      from,
+      to,
+      quantity,
+      distance,
+      totalDispatched: totalDispatched + quantity,
+      totalDistance: totalDistance + distance,
+    })
+
     setSelectedEmergency(null)
     setSelectedAmbulance(null)
-    
-    // Refresh data after dispatch
-    await fetchData()
+
+    // Only fetch the emergencies queue after a successful dispatch
+    // This ensures we get the updated queue state after the dispatch
     await fetchEmergenciesQueue()
+
+    // Then fetch other data
+    await fetchData()
   }
 
+  // Handle auto dispatch start
+  const handleAutoDispatchStart = useCallback(async () => {
+    // Update state to indicate auto dispatch is running
+    setIsAutoDispatch(true)
+
+    // Start the timer if it's not already running
+    if (!startTime) {
+      startTimer()
+    }
+
+    // Start the refresh interval
+    startRefreshInterval()
+
+    // Save simulation state with auto flag
+    const status = await fetchControlStatus()
+    if (status) {
+      saveSimulationState(status.seed || "default", status.targetDispatches, status.maxActiveCalls, true)
+    }
+
+    logger.info("Auto dispatch started")
+  }, [fetchControlStatus, saveSimulationState, startRefreshInterval, startTime, startTimer])
+
+  // Handle auto dispatch stop
+  const handleAutoDispatchStop = useCallback(async () => {
+    // Update state to indicate auto dispatch is stopped
+    setIsAutoDispatch(false)
+
+    // Don't stop the timer or refresh interval here,
+    // as they might be needed for manual dispatch
+
+    logger.info("Auto dispatch stopped")
+  }, [])
+
+  // Check for saved simulation state on component mount
   useEffect(() => {
-    // Initial data fetch
-    fetchData()
-    fetchEmergenciesQueue()
-    
+    const checkForSavedState = async () => {
+      // Add a flag to localStorage to prevent showing the recovery toast multiple times
+      const recoveryShown = localStorage.getItem("recoveryNotificationShown")
+
+      const savedStateJson = localStorage.getItem("simulationState")
+      const savedStartTimeJson = localStorage.getItem("simulationStartTime")
+
+      if (savedStateJson && !recoveryShown) {
+        try {
+          const savedState = JSON.parse(savedStateJson)
+
+          // Check if the saved state is recent (within the last hour)
+          const lastUpdated = new Date(savedState.lastUpdated)
+          const now = new Date()
+          const timeDiff = now.getTime() - lastUpdated.getTime()
+          const isRecent = timeDiff < 3600000 // 1 hour
+
+          if (savedState.isRunning && isRecent) {
+            // Set flag to prevent showing the toast again
+            localStorage.setItem("recoveryNotificationShown", "true")
+
+            setRecoveryState({
+              isRecovering: true,
+              lastState: savedState,
+            })
+
+            // Show recovery toast
+            toast.info("Simulation Recovery", {
+              description: "A previous simulation was detected. Would you like to resume?",
+              action: {
+                label: "Resume",
+                onClick: () => {
+                  // Resume the simulation
+                  setTotalDispatched(savedState.totalDispatched || 0)
+                  setTotalDistance(savedState.totalDistance || 0)
+                  setIsAutoDispatch(savedState.isAutoDispatch || false)
+
+                  if (savedStartTimeJson) {
+                    setStartTime(new Date(savedStartTimeJson))
+                  }
+
+                  // Set the active tab based on the simulation type
+                  setActiveTab(savedState.isAutoDispatch ? "auto" : "manual")
+
+                  handleReset(
+                    savedState.seed || "default",
+                    savedState.targetDispatches || 10000,
+                    savedState.maxActiveCalls || 100,
+                  )
+
+                  setRecoveryState({ isRecovering: false })
+
+                  logger.info("Simulation resumed from saved state", { savedState })
+                },
+              },
+              onDismiss: () => {
+                // Clear the saved state
+                clearSimulationState()
+                setRecoveryState({ isRecovering: false })
+              },
+              duration: 10000,
+            })
+          } else {
+            // Clear outdated state
+            clearSimulationState()
+          }
+        } catch (error) {
+          logger.error("Error parsing saved simulation state", { error })
+          clearSimulationState()
+        }
+      }
+    }
+
+    // Initial data fetch - don't automatically start a simulation
+    const initialFetch = async () => {
+      try {
+        const [locationsData] = await Promise.all([fetchLocations()])
+        setLocations(locationsData as unknown as Location[])
+        setIsLoading(false)
+      } catch {
+        // Don't set error on initial load
+        setIsLoading(false)
+      }
+    }
+
+    initialFetch()
+    checkForSavedState()
+
     return () => {
       if (refreshInterval) {
         clearInterval(refreshInterval)
@@ -210,15 +550,17 @@ export default function Dashboard() {
         clearInterval(timerRef.current)
       }
     }
-  }, [])
+  }, [clearSimulationState, handleReset, refreshInterval])
 
   // Create a local status object that includes our tracked metrics
-  const localStatus = status ? {
-    ...status,
-    runningTime: elapsedTime,
-    totalDispatches: totalDispatched,
-    distance: totalDistance
-  } : null
+  const localStatus = status
+    ? {
+        ...status,
+        runningTime: elapsedTime,
+        totalDispatches: totalDispatched,
+        distance: totalDistance,
+      }
+    : null
 
   return (
     <div className="flex flex-col h-screen">
@@ -242,19 +584,30 @@ export default function Dashboard() {
         </div>
 
         <div className="w-full md:w-1/4 h-full overflow-y-auto bg-gray-50 border-l">
-          <Tabs defaultValue="manual" className="w-full">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             <TabsList className="w-full grid grid-cols-2">
               <TabsTrigger value="manual">Manual Dispatch</TabsTrigger>
               <TabsTrigger value="auto">Auto Dispatch</TabsTrigger>
             </TabsList>
 
             <TabsContent value="manual" className="space-y-4 p-4">
-              <ControlPanel 
-                onReset={handleReset} 
+              <ControlPanel
+                onReset={handleReset}
                 onStop={handleStop}
                 onFetchNext={handleFetchNext}
-                isRunning={isSimulationRunning}
+                isRunning={isSimulationRunning && !isAutoDispatch}
+                isStopping={isStoppingSimulation}
               />
+
+              {isAutoDispatch && isSimulationRunning && (
+                <Card className="bg-yellow-50 border-yellow-200">
+                  <CardContent className="p-4 text-yellow-700">
+                    <p className="text-center font-medium">
+                      Auto dispatch is currently running. Stop it before using manual dispatch.
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
 
               <EmergencyPanel
                 emergencies={emergencies}
@@ -272,10 +625,13 @@ export default function Dashboard() {
             </TabsContent>
 
             <TabsContent value="auto" className="p-4">
-              <AutoDispatchPanel 
-                onStatusUpdate={fetchData} 
+              <AutoDispatchPanel
+                onStatusUpdate={fetchData}
                 onEmergenciesUpdate={fetchEmergenciesQueue}
-                status={status} 
+                status={status}
+                isManualRunning={isSimulationRunning && !isAutoDispatch}
+                onAutoStart={handleAutoDispatchStart}
+                onAutoStop={handleAutoDispatchStop}
               />
             </TabsContent>
           </Tabs>

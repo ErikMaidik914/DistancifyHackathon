@@ -46,12 +46,19 @@ import type {
   ): Promise<ControlStatus> {
     const response = await fetch(
       `${API_BASE_URL}/control/reset?seed=${seed}&targetDispatches=${targetDispatches}&maxActiveCalls=${maxActiveCalls}`,
+        {
+            method: "POST",
+        },
     )
     return response.json()
   }
   
   export async function stopControl(): Promise<ControlStatus> {
-    const response = await fetch(`${API_BASE_URL}/control/stop`)
+    const response = await fetch(`${API_BASE_URL}/control/stop`,
+        {
+            method: "POST",
+        },
+    )
     return response.json()
   }
   

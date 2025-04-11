@@ -22,7 +22,8 @@ export function StatusPanel({ status, isLoading, error }: StatusPanelProps) {
     )
   }
 
-  if (error) {
+  // Modify the error condition to only show when there's an error AND we're not in the initial state
+  if (error && status !== null) {
     return (
       <Card className="m-4 border-red-200 bg-red-50">
         <CardContent className="p-4 flex items-center text-red-600">
@@ -37,7 +38,7 @@ export function StatusPanel({ status, isLoading, error }: StatusPanelProps) {
     return (
       <Card className="m-4">
         <CardContent className="p-4 text-center text-gray-500">
-          No status available. Please start a simulation.
+          No simulation running. Start a simulation to see status.
         </CardContent>
       </Card>
     )

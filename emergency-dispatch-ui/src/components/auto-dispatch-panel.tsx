@@ -8,14 +8,26 @@ import { Label } from "@/components/ui/label"
 import { Loader2, Play, StopCircle } from "lucide-react"
 import type { ControlStatus, SimulationConfig } from "@/types"
 import { startSimulation, stopSimulation } from "@/services/api"
-import { useToast } from "@/components/ui/use-toast"
+import { toast } from "sonner"
+import { logger } from "./logger"
+
 interface AutoDispatchPanelProps {
-  onStatusUpdate: () => void
-  onEmergenciesUpdate: () => Promise<void> // Add this line
+  onStatusUpdate: () => Promise<boolean>
+  onEmergenciesUpdate: () => Promise<void> // Changed return type to void
   status: ControlStatus | null
+  isManualRunning: boolean // New prop to check if manual dispatch is running
+  onAutoStart: () => Promise<void> // New prop to notify parent when auto dispatch starts
+  onAutoStop: () => Promise<void> // New prop to notify parent when auto dispatch stops
 }
 
-export function AutoDispatchPanel({ onStatusUpdate, onEmergenciesUpdate, status }: AutoDispatchPanelProps) {
+export function AutoDispatchPanel({
+  onStatusUpdate,
+  onEmergenciesUpdate,
+  status,
+  isManualRunning,
+  onAutoStart,
+  onAutoStop,
+}: AutoDispatchPanelProps) {
   const [config, setConfig] = useState<SimulationConfig>({
     seed: "default",
     targetDispatches: 10000,
@@ -26,24 +38,34 @@ export function AutoDispatchPanel({ onStatusUpdate, onEmergenciesUpdate, status 
 
   const [isStarting, setIsStarting] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
-  const { toast } = useToast()
 
   const handleStart = async () => {
+    // Check if manual dispatch is running
+    if (isManualRunning) {
+      toast.error("Cannot Start Auto Dispatch", {
+        description: "Please stop the manual dispatch simulation first before starting auto dispatch.",
+      })
+      return
+    }
+
     try {
       setIsStarting(true)
       await startSimulation(config)
-      toast({
-        title: "Automatic Dispatch Started",
+      toast.success("Automatic Dispatch Started", {
         description: "The automatic dispatch simulation has been started successfully.",
       })
-      onStatusUpdate()
-      await onEmergenciesUpdate() // Add this line
+      await onStatusUpdate()
+      await onEmergenciesUpdate()
+
+      // Notify parent component that auto dispatch has started
+      await onAutoStart()
+
+      logger.info("Auto dispatch started", { config })
     } catch (error) {
       console.error(error)
-      toast({
-        title: "Failed to Start",
+      logger.error("Failed to start auto dispatch", { error })
+      toast.error("Failed to Start", {
         description: "Failed to start automatic dispatch. Please try again.",
-        variant: "destructive",
       })
     } finally {
       setIsStarting(false)
@@ -54,18 +76,21 @@ export function AutoDispatchPanel({ onStatusUpdate, onEmergenciesUpdate, status 
     try {
       setIsStopping(true)
       await stopSimulation()
-      toast({
-        title: "Automatic Dispatch Stopped",
+      toast.success("Automatic Dispatch Stopped", {
         description: "The automatic dispatch simulation has been stopped successfully.",
       })
-      onStatusUpdate()
-      await onEmergenciesUpdate() // Add this line
+      await onStatusUpdate()
+      await onEmergenciesUpdate()
+
+      // Notify parent component that auto dispatch has stopped
+      await onAutoStop()
+
+      logger.info("Auto dispatch stopped")
     } catch (error) {
       console.error(error)
-      toast({
-        title: "Failed to Stop",
+      logger.error("Failed to stop auto dispatch", { error })
+      toast.error("Failed to Stop", {
         description: "Failed to stop automatic dispatch. Please try again.",
-        variant: "destructive",
       })
     } finally {
       setIsStopping(false)
@@ -95,7 +120,7 @@ export function AutoDispatchPanel({ onStatusUpdate, onEmergenciesUpdate, status 
               value={config.seed}
               onChange={(e) => updateConfig("seed", e.target.value)}
               placeholder="default"
-              disabled={isRunning}
+              disabled={isRunning || isManualRunning}
             />
           </div>
 
@@ -107,7 +132,7 @@ export function AutoDispatchPanel({ onStatusUpdate, onEmergenciesUpdate, status 
               min={1}
               value={config.targetDispatches}
               onChange={(e) => updateConfig("targetDispatches", Number.parseInt(e.target.value) || 10000)}
-              disabled={isRunning}
+              disabled={isRunning || isManualRunning}
             />
           </div>
 
@@ -119,7 +144,7 @@ export function AutoDispatchPanel({ onStatusUpdate, onEmergenciesUpdate, status 
               min={1}
               value={config.maxActiveCalls}
               onChange={(e) => updateConfig("maxActiveCalls", Number.parseInt(e.target.value) || 100)}
-              disabled={isRunning}
+              disabled={isRunning || isManualRunning}
             />
           </div>
 
@@ -132,7 +157,7 @@ export function AutoDispatchPanel({ onStatusUpdate, onEmergenciesUpdate, status 
               step={0.1}
               value={config.poll_interval}
               onChange={(e) => updateConfig("poll_interval", Number.parseFloat(e.target.value) || 0.3)}
-              disabled={isRunning}
+              disabled={isRunning || isManualRunning}
             />
           </div>
 
@@ -144,14 +169,14 @@ export function AutoDispatchPanel({ onStatusUpdate, onEmergenciesUpdate, status 
               min={1}
               value={config.status_interval}
               onChange={(e) => updateConfig("status_interval", Number.parseInt(e.target.value) || 5)}
-              disabled={isRunning}
+              disabled={isRunning || isManualRunning}
             />
           </div>
         </CardContent>
       </Card>
 
       <div className="flex gap-4">
-        <Button className="flex-1" onClick={handleStart} disabled={isRunning || isStarting}>
+        <Button className="flex-1" onClick={handleStart} disabled={isRunning || isStarting || isManualRunning}>
           {isStarting ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -179,6 +204,16 @@ export function AutoDispatchPanel({ onStatusUpdate, onEmergenciesUpdate, status 
           )}
         </Button>
       </div>
+
+      {isManualRunning && (
+        <Card className="bg-yellow-50 border-yellow-200">
+          <CardContent className="p-4 text-yellow-700">
+            <p className="text-center font-medium">
+              Manual dispatch is currently running. Stop it before starting auto dispatch.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {isRunning && (
         <Card className="bg-green-50 border-green-200">

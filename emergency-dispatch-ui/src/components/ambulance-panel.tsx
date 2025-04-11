@@ -5,12 +5,12 @@ import type { AmbulanceLocation, EmergencyCall } from "@/types"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
-import { Ambulance, ArrowRight, Loader2 } from 'lucide-react'
+import { Ambulance, ArrowRight, Loader2 } from "lucide-react"
 import { calculateDistance } from "@/utils/distance"
 import { dispatchAmbulance } from "@/services/api"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { toast } from 'sonner'
+import { toast } from "sonner"
 
 interface AmbulancePanelProps {
   ambulances: AmbulanceLocation[]
@@ -79,21 +79,16 @@ export function AmbulancePanel({
         quantity: dispatchQuantity,
       })
 
-      toast.success('Ambulance Dispatched', {
-        description: `Successfully dispatched ${dispatchQuantity} ambulance(s) from ${selectedAmbulance.city} to ${selectedEmergency.city}`
+      toast.success("Ambulance Dispatched", {
+        description: `Successfully dispatched ${dispatchQuantity} ambulance(s) from ${selectedAmbulance.city} to ${selectedEmergency.city}`,
       })
 
       // Pass the distance to the parent component
-      onDispatchSuccess(
-        selectedAmbulance.city, 
-        selectedEmergency.city, 
-        dispatchQuantity, 
-        distance * dispatchQuantity
-      )
+      onDispatchSuccess(selectedAmbulance.city, selectedEmergency.city, dispatchQuantity, distance * dispatchQuantity)
     } catch (error) {
-      console.error(error)
-      toast.error('Dispatch Failed', {
-        description: 'Failed to dispatch ambulance. Please try again.'
+      console.error("Dispatch error:", error)
+      toast.error("Dispatch Failed", {
+        description: "Failed to dispatch ambulance. Please try again.",
       })
     } finally {
       setIsDispatching(false)
@@ -108,14 +103,15 @@ export function AmbulancePanel({
   }
 
   // Calculate distance between selected ambulance and emergency
-  const selectedDistance = selectedAmbulance && selectedEmergency
-    ? calculateDistance(
-        selectedAmbulance.latitude,
-        selectedAmbulance.longitude,
-        selectedEmergency.latitude,
-        selectedEmergency.longitude,
-      )
-    : 0
+  const selectedDistance =
+    selectedAmbulance && selectedEmergency
+      ? calculateDistance(
+          selectedAmbulance.latitude,
+          selectedAmbulance.longitude,
+          selectedEmergency.latitude,
+          selectedEmergency.longitude,
+        )
+      : 0
 
   return (
     <Card>
