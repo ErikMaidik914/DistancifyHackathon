@@ -1,11 +1,11 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { MapContainer } from "./map-container"
-import { EmergencyPanel } from "./emergency-panel"
+import { MapContainer } from "./ui/map-container"
+import { EmergencyPanel } from "./ui/emergency-panel"
 import { AmbulancePanel } from "./ambulance-panel"
 import { ControlPanel } from "./control-panel"
-import { StatusPanel } from "./status-panel"
+import { StatusPanel } from "./ui/status-panel"
 import type { AmbulanceLocation, ControlStatus, EmergencyCall, Location } from "@/types"
 import {
   fetchAvailableAmbulances,
@@ -56,13 +56,6 @@ export default function Dashboard() {
 
     const interval = setInterval(fetchData, 2000)
     setRefreshInterval(interval)
-  }
-
-  const stopRefreshInterval = () => {
-    if (refreshInterval) {
-      clearInterval(refreshInterval)
-      setRefreshInterval(null)
-    }
   }
 
   const handleReset = async (seed: string, targetDispatches: number, maxActiveCalls: number) => {

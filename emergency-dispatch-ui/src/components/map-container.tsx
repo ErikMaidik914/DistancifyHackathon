@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react"
 import type { AmbulanceLocation, EmergencyCall, Location } from "@/types"
 import { Card } from "@/components/ui/card"
 import { Loader2 } from "lucide-react"
-import { useMobile } from "@/hooks/use-mobile"
 
 interface MapContainerProps {
   locations: Location[]
@@ -23,7 +22,6 @@ export function MapContainer({
 }: MapContainerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const isMobile = useMobile()
 
   // Calculate bounds for the map
   const getBounds = () => {

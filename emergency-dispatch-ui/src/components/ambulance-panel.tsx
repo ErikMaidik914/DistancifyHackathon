@@ -5,12 +5,12 @@ import type { AmbulanceLocation, EmergencyCall } from "@/types"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
-import { Ambulance, ArrowRight, Loader2 } from "lucide-react"
+import { Ambulance, ArrowRight, Loader2 } from 'lucide-react'
 import { calculateDistance } from "@/utils/distance"
 import { dispatchAmbulance } from "@/services/api"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { useToast } from "@/hooks/use-toast"
+import { toast } from 'sonner'
 
 interface AmbulancePanelProps {
   ambulances: AmbulanceLocation[]
@@ -30,7 +30,6 @@ export function AmbulancePanel({
   const [searchTerm, setSearchTerm] = useState("")
   const [dispatchQuantity, setDispatchQuantity] = useState(1)
   const [isDispatching, setIsDispatching] = useState(false)
-  const { toast } = useToast()
 
   const filteredAmbulances = ambulances
     .filter(
@@ -63,24 +62,21 @@ export function AmbulancePanel({
     try {
       setIsDispatching(true)
 
-      const response = await dispatchAmbulance({
+      await dispatchAmbulance({
         from: selectedAmbulance.city,
         to: selectedEmergency.city,
         quantity: dispatchQuantity,
       })
 
-      toast({
-        title: "Ambulance Dispatched",
-        description: `Successfully dispatched ${dispatchQuantity} ambulance(s) from ${selectedAmbulance.city} to ${selectedEmergency.city}`,
+      toast.success('Ambulance Dispatched', {
+        description: `Successfully dispatched ${dispatchQuantity} ambulance(s) from ${selectedAmbulance.city} to ${selectedEmergency.city}`
       })
 
       onDispatchSuccess()
     } catch (error) {
       console.error(error)
-      toast({
-        title: "Dispatch Failed",
-        description: "Failed to dispatch ambulance. Please try again.",
-        variant: "destructive",
+      toast.error('Dispatch Failed', {
+        description: 'Failed to dispatch ambulance. Please try again.'
       })
     } finally {
       setIsDispatching(false)
