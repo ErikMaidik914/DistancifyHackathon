@@ -17,7 +17,7 @@ interface AmbulancePanelProps {
   onSelect: (ambulance: AmbulanceLocation) => void
   selectedAmbulance: AmbulanceLocation | null
   selectedEmergency: EmergencyCall | null
-  onDispatchSuccess: () => void
+  onDispatchSuccess: (from: string, to: string, quantity: number, distance: number) => void
 }
 
 export function AmbulancePanel({
@@ -62,9 +62,20 @@ export function AmbulancePanel({
     try {
       setIsDispatching(true)
 
+      // Calculate distance for tracking
+      const distance = calculateDistance(
+        selectedAmbulance.latitude,
+        selectedAmbulance.longitude,
+        selectedEmergency.latitude,
+        selectedEmergency.longitude,
+      )
+
+      // Updated dispatch request format
       await dispatchAmbulance({
-        from: selectedAmbulance.city,
-        to: selectedEmergency.city,
+        sourceCounty: selectedAmbulance.county,
+        sourceCity: selectedAmbulance.city,
+        targetCounty: selectedEmergency.county,
+        targetCity: selectedEmergency.city,
         quantity: dispatchQuantity,
       })
 
@@ -72,7 +83,13 @@ export function AmbulancePanel({
         description: `Successfully dispatched ${dispatchQuantity} ambulance(s) from ${selectedAmbulance.city} to ${selectedEmergency.city}`
       })
 
-      onDispatchSuccess()
+      // Pass the distance to the parent component
+      onDispatchSuccess(
+        selectedAmbulance.city, 
+        selectedEmergency.city, 
+        dispatchQuantity, 
+        distance * dispatchQuantity
+      )
     } catch (error) {
       console.error(error)
       toast.error('Dispatch Failed', {
@@ -89,6 +106,16 @@ export function AmbulancePanel({
     if (dispatchQuantity > selectedAmbulance.quantity) return false
     return true
   }
+
+  // Calculate distance between selected ambulance and emergency
+  const selectedDistance = selectedAmbulance && selectedEmergency
+    ? calculateDistance(
+        selectedAmbulance.latitude,
+        selectedAmbulance.longitude,
+        selectedEmergency.latitude,
+        selectedEmergency.longitude,
+      )
+    : 0
 
   return (
     <Card>
@@ -162,6 +189,15 @@ export function AmbulancePanel({
               <div className="text-sm font-medium">{selectedAmbulance.city}</div>
               <ArrowRight className="h-4 w-4 text-gray-500" />
               <div className="text-sm font-medium">{selectedEmergency.city}</div>
+            </div>
+
+            <div className="text-sm mb-2">
+              Distance: <span className="font-semibold">{selectedDistance.toFixed(2)}</span>
+              {dispatchQuantity > 1 && (
+                <span className="ml-2">
+                  Total: <span className="font-semibold">{(selectedDistance * dispatchQuantity).toFixed(2)}</span>
+                </span>
+              )}
             </div>
 
             <div className="space-y-2">

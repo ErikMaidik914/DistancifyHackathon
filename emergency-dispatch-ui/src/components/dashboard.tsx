@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { MapContainer } from "./map-container"
+import { useEffect, useState, useRef } from "react"
+import { LeafletMap } from "./leaflet-map" // Import the new Leaflet map component
 import { EmergencyPanel } from "./emergency-panel"
 import { AmbulancePanel } from "./ambulance-panel"
 import { ControlPanel } from "./control-panel"
@@ -12,9 +12,11 @@ import {
   fetchControlStatus,
   fetchEmergencyCalls,
   fetchLocations,
+  fetchNextEmergency,
 } from "@/services/api"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { AutoDispatchPanel } from "./auto-dispatch-panel"
+import { toast } from 'sonner'
 
 export default function Dashboard() {
   const [locations, setLocations] = useState<Location[]>([])
@@ -27,24 +29,37 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null)
   const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(null)
   const [isSimulationRunning, setIsSimulationRunning] = useState(false)
+  
+  // Local progress tracking
+  const [totalDispatched, setTotalDispatched] = useState(0)
+  const [totalDistance, setTotalDistance] = useState(0)
+  const [startTime, setStartTime] = useState<Date | null>(null)
+  const [elapsedTime, setElapsedTime] = useState("00:00:00")
+  const timerRef = useRef<NodeJS.Timeout | null>(null)
 
+  // Fetch all data including emergencies queue
   const fetchData = async () => {
     try {
-      const [locationsData, ambulancesData, emergenciesData, statusData] = await Promise.all([
+      const [locationsData, ambulancesData, statusData] = await Promise.all([
         fetchLocations(),
         fetchAvailableAmbulances(),
-        fetchEmergencyCalls(),
         fetchControlStatus(),
       ])
 
       // Use type assertion to resolve type conflicts
       setLocations(locationsData as unknown as Location[])
       setAmbulances(ambulancesData)
-      setEmergencies(emergenciesData)
       setStatus(statusData)
       
       // Check if simulation is running based on status
-      setIsSimulationRunning(statusData?.status === "Running")
+      const isRunning = statusData?.status === "Running"
+      setIsSimulationRunning(isRunning)
+      
+      // Update local progress from status
+      if (statusData) {
+        setTotalDispatched(statusData.totalDispatches)
+        setTotalDistance(statusData.distance)
+      }
       
       setIsLoading(false)
     } catch (err) {
@@ -54,12 +69,58 @@ export default function Dashboard() {
     }
   }
 
+  // Separate function to fetch emergencies queue
+  const fetchEmergenciesQueue = async () => {
+    try {
+      const emergenciesData = await fetchEmergencyCalls()
+      setEmergencies(emergenciesData)
+    } catch (err) {
+      console.error("Failed to fetch emergencies queue:", err)
+    }
+  }
+
+  // Start timer for tracking elapsed time
+  const startTimer = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current)
+    }
+    
+    setStartTime(new Date())
+    
+    timerRef.current = setInterval(() => {
+      if (startTime) {
+        const now = new Date()
+        const diff = now.getTime() - startTime.getTime()
+        
+        // Format elapsed time as HH:MM:SS
+        const hours = Math.floor(diff / 3600000).toString().padStart(2, '0')
+        const minutes = Math.floor((diff % 3600000) / 60000).toString().padStart(2, '0')
+        const seconds = Math.floor((diff % 60000) / 1000).toString().padStart(2, '0')
+        
+        setElapsedTime(`${hours}:${minutes}:${seconds}`)
+      }
+    }, 1000)
+  }
+
+  // Stop timer
+  const stopTimer = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current)
+      timerRef.current = null
+    }
+  }
+
   const startRefreshInterval = () => {
     if (refreshInterval) {
       clearInterval(refreshInterval)
     }
 
-    const interval = setInterval(fetchData, 2000)
+    // Fetch data every 2 seconds
+    const interval = setInterval(() => {
+      fetchData()
+      fetchEmergenciesQueue() // Specifically fetch emergencies queue
+    }, 2000)
+    
     setRefreshInterval(interval)
   }
 
@@ -73,7 +134,14 @@ export default function Dashboard() {
   const handleReset = async (_seed: string, _targetDispatches: number, _maxActiveCalls: number) => {
     try {
       setIsLoading(true)
+      
+      // Reset local progress tracking
+      setTotalDispatched(0)
+      setTotalDistance(0)
+      startTimer()
+      
       await fetchData()
+      await fetchEmergenciesQueue() // Initial fetch of emergencies
       startRefreshInterval()
       setIsSimulationRunning(true)
     } catch (err) {
@@ -86,7 +154,9 @@ export default function Dashboard() {
 
   const handleStop = async () => {
     try {
+      stopTimer()
       await fetchData()
+      await fetchEmergenciesQueue()
       setIsSimulationRunning(false)
       stopRefreshInterval()
     } catch (err) {
@@ -97,9 +167,11 @@ export default function Dashboard() {
 
   const handleFetchNext = async () => {
     try {
-      await fetchData()
+      await fetchNextEmergency()
+      await fetchEmergenciesQueue() // Update emergencies after fetching next
+      toast.success("Fetched next emergency")
     } catch (err) {
-      setError("Failed to fetch next emergency. Please check if the API server is running.")
+      toast.error("Failed to fetch next emergency")
       console.error(err)
     }
   }
@@ -112,20 +184,41 @@ export default function Dashboard() {
     setSelectedAmbulance(ambulance)
   }
 
-  const handleDispatchSuccess = () => {
+  const handleDispatchSuccess = async (_from: string, _to: string, quantity: number, distance: number) => {
+    // Update local progress tracking
+    setTotalDispatched(prev => prev + quantity)
+    setTotalDistance(prev => prev + distance)
+    
     setSelectedEmergency(null)
     setSelectedAmbulance(null)
-    fetchData()
+    
+    // Refresh data after dispatch
+    await fetchData()
+    await fetchEmergenciesQueue()
   }
 
   useEffect(() => {
+    // Initial data fetch
     fetchData()
+    fetchEmergenciesQueue()
+    
     return () => {
       if (refreshInterval) {
         clearInterval(refreshInterval)
       }
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+      }
     }
   }, [])
+
+  // Create a local status object that includes our tracked metrics
+  const localStatus = status ? {
+    ...status,
+    runningTime: elapsedTime,
+    totalDispatches: totalDispatched,
+    distance: totalDistance
+  } : null
 
   return (
     <div className="flex flex-col h-screen">
@@ -135,15 +228,17 @@ export default function Dashboard() {
 
       <main className="flex-1 flex flex-col md:flex-row overflow-hidden">
         <div className="w-full md:w-3/4 h-full flex flex-col">
-          <MapContainer
-            locations={locations}
-            ambulances={ambulances}
-            emergencies={emergencies}
-            selectedEmergency={selectedEmergency}
-            selectedAmbulance={selectedAmbulance}
-          />
+          <div className="flex-1 m-4 relative overflow-hidden">
+            <LeafletMap
+              locations={locations}
+              ambulances={ambulances}
+              emergencies={emergencies}
+              selectedEmergency={selectedEmergency}
+              selectedAmbulance={selectedAmbulance}
+            />
+          </div>
 
-          <StatusPanel status={status} isLoading={isLoading} error={error} />
+          <StatusPanel status={localStatus} isLoading={isLoading} error={error} />
         </div>
 
         <div className="w-full md:w-1/4 h-full overflow-y-auto bg-gray-50 border-l">
@@ -177,7 +272,11 @@ export default function Dashboard() {
             </TabsContent>
 
             <TabsContent value="auto" className="p-4">
-              <AutoDispatchPanel onStatusUpdate={fetchData} status={status} />
+              <AutoDispatchPanel 
+                onStatusUpdate={fetchData} 
+                onEmergenciesUpdate={fetchEmergenciesQueue}
+                status={status} 
+              />
             </TabsContent>
           </Tabs>
         </div>

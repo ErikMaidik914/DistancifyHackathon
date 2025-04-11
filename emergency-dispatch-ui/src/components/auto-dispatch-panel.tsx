@@ -5,17 +5,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Loader2, Play, StopCircle } from 'lucide-react'
+import { Loader2, Play, StopCircle } from "lucide-react"
 import type { ControlStatus, SimulationConfig } from "@/types"
 import { startSimulation, stopSimulation } from "@/services/api"
-import { toast } from 'sonner'
-
+import { useToast } from "@/components/ui/use-toast"
 interface AutoDispatchPanelProps {
   onStatusUpdate: () => void
+  onEmergenciesUpdate: () => Promise<void> // Add this line
   status: ControlStatus | null
 }
 
-export function AutoDispatchPanel({ onStatusUpdate, status }: AutoDispatchPanelProps) {
+export function AutoDispatchPanel({ onStatusUpdate, onEmergenciesUpdate, status }: AutoDispatchPanelProps) {
   const [config, setConfig] = useState<SimulationConfig>({
     seed: "default",
     targetDispatches: 10000,
@@ -26,19 +26,24 @@ export function AutoDispatchPanel({ onStatusUpdate, status }: AutoDispatchPanelP
 
   const [isStarting, setIsStarting] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
+  const { toast } = useToast()
 
   const handleStart = async () => {
     try {
       setIsStarting(true)
       await startSimulation(config)
-      toast.success('Automatic Dispatch Started', {
-        description: 'The automatic dispatch simulation has been started successfully.'
+      toast({
+        title: "Automatic Dispatch Started",
+        description: "The automatic dispatch simulation has been started successfully.",
       })
       onStatusUpdate()
+      await onEmergenciesUpdate() // Add this line
     } catch (error) {
       console.error(error)
-      toast.error('Failed to Start', {
-        description: 'Failed to start automatic dispatch. Please try again.'
+      toast({
+        title: "Failed to Start",
+        description: "Failed to start automatic dispatch. Please try again.",
+        variant: "destructive",
       })
     } finally {
       setIsStarting(false)
@@ -49,14 +54,18 @@ export function AutoDispatchPanel({ onStatusUpdate, status }: AutoDispatchPanelP
     try {
       setIsStopping(true)
       await stopSimulation()
-      toast.success('Automatic Dispatch Stopped', {
-        description: 'The automatic dispatch simulation has been stopped successfully.'
+      toast({
+        title: "Automatic Dispatch Stopped",
+        description: "The automatic dispatch simulation has been stopped successfully.",
       })
       onStatusUpdate()
+      await onEmergenciesUpdate() // Add this line
     } catch (error) {
       console.error(error)
-      toast.error('Failed to Stop', {
-        description: 'Failed to stop automatic dispatch. Please try again.'
+      toast({
+        title: "Failed to Stop",
+        description: "Failed to stop automatic dispatch. Please try again.",
+        variant: "destructive",
       })
     } finally {
       setIsStopping(false)
