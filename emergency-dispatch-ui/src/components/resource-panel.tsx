@@ -1,26 +1,47 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useMemo } from "react"
+
+import { useState, useEffect, useCallback } from "react"
 import type { EmergencyCall, EmergencyResource, EmergencyType } from "@/types"
 import { EMERGENCY_TYPE_COLORS } from "@/types"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
-import { Ambulance, ArrowRight, Loader2, CheckCircle2, AlertCircle, Filter } from "lucide-react"
+import {
+  Ambulance,
+  ArrowRight,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
+  Filter,
+  SortAsc,
+  SortDesc,
+  X,
+  Sliders,
+} from "lucide-react"
 import { calculateDistance } from "@/utils/distance"
 import { dispatchResource } from "@/services/api"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
+import { logger } from "./logger"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuCheckboxItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
 } from "@/components/ui/dropdown-menu"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { logger } from "./logger"
 
 interface ResourcePanelProps {
   resources: EmergencyResource[]
@@ -29,6 +50,9 @@ interface ResourcePanelProps {
   selectedEmergency: EmergencyCall | null
   onDispatchSuccess: (from: string, to: string, quantity: number, distance: number, type: EmergencyType) => void
 }
+
+type SortOption = "distance" | "quantity" | "name" | "county"
+type SortDirection = "asc" | "desc"
 
 export function ResourcePanel({
   resources,
@@ -50,20 +74,28 @@ export function ResourcePanel({
     Rescue: true,
     Utility: true,
   })
+  const [sortBy, setSortBy] = useState<SortOption>("distance")
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc")
+  const [availableOnly, setAvailableOnly] = useState(true)
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
+  const [minQuantity, setMinQuantity] = useState(0)
 
   // Calculate the remaining resources needed for the selected emergency by type
-  const getRemainingNeededByType = (type: EmergencyType) => {
-    if (!selectedEmergency) return 0
+  const getRemainingNeededByType = useCallback(
+    (type: EmergencyType) => {
+      if (!selectedEmergency) return 0
 
-    // Find requests of this type
-    const typeRequests = selectedEmergency.requests.filter((req) => req.Type === type)
-    const totalNeeded = typeRequests.reduce((sum, req) => sum + req.Quantity, 0)
+      // Find requests of this type
+      const typeRequests = selectedEmergency.requests.filter((req) => req.Type === type)
+      const totalNeeded = typeRequests.reduce((sum, req) => sum + req.Quantity, 0)
 
-    // Get dispatched count for this type
-    const dispatched = (selectedEmergency.dispatched as unknown as Record<EmergencyType, number>)?.[type] || 0
+      // Get dispatched count for this type
+      const dispatched = (selectedEmergency.dispatched as Record<EmergencyType, number>)?.[type] || 0
 
-    return Math.max(0, totalNeeded - dispatched)
-  }
+      return Math.max(0, totalNeeded - dispatched)
+    },
+    [selectedEmergency],
+  )
 
   // Auto-suggest the best resource when an emergency is selected
   useEffect(() => {
@@ -123,38 +155,63 @@ export function ResourcePanel({
 
     // Clear any previous dispatch errors when selection changes
     setDispatchError(null)
-  }, [selectedEmergency, resources, selectedResource, onSelect, activeTab])
+  }, [selectedEmergency, resources, selectedResource, onSelect, activeTab, getRemainingNeededByType])
 
-  // Filter resources based on search term, type filters, and active tab
-  const filteredResources = resources
-    .filter(
-      (resource) =>
-        // Match search term
-        (resource.city.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          resource.county.toLowerCase().includes(searchTerm.toLowerCase())) &&
-        // Match type filters
-        typeFilters[resource.type] &&
-        // Match active tab
-        resource.type === activeTab,
-    )
-    .sort((a, b) => {
-      if (selectedEmergency) {
-        const distA = calculateDistance(
-          a.latitude,
-          a.longitude,
-          selectedEmergency.latitude,
-          selectedEmergency.longitude,
-        )
-        const distB = calculateDistance(
-          b.latitude,
-          b.longitude,
-          selectedEmergency.latitude,
-          selectedEmergency.longitude,
-        )
-        return distA - distB
-      }
-      return 0
-    })
+  // Filter and sort resources
+  const getFilteredResources = useCallback(() => {
+    return resources
+      .filter(
+        (resource) =>
+          // Match search term
+          (resource.city.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            resource.county.toLowerCase().includes(searchTerm.toLowerCase())) &&
+          // Match type filters
+          typeFilters[resource.type] &&
+          // Match active tab
+          resource.type === activeTab &&
+          // Filter by availability if enabled
+          (!availableOnly || resource.quantity > 0) &&
+          // Filter by minimum quantity
+          resource.quantity >= minQuantity,
+      )
+      .sort((a, b) => {
+        // Sort by selected option
+        if (sortBy === "distance" && selectedEmergency) {
+          const distA = calculateDistance(
+            a.latitude,
+            a.longitude,
+            selectedEmergency.latitude,
+            selectedEmergency.longitude,
+          )
+          const distB = calculateDistance(
+            b.latitude,
+            b.longitude,
+            selectedEmergency.latitude,
+            selectedEmergency.longitude,
+          )
+          return sortDirection === "asc" ? distA - distB : distB - distA
+        } else if (sortBy === "quantity") {
+          return sortDirection === "asc" ? a.quantity - b.quantity : b.quantity - a.quantity
+        } else if (sortBy === "name") {
+          return sortDirection === "asc" ? a.city.localeCompare(b.city) : b.city.localeCompare(a.city)
+        } else if (sortBy === "county") {
+          return sortDirection === "asc" ? a.county.localeCompare(b.county) : b.county.localeCompare(a.county)
+        }
+        return 0
+      })
+  }, [
+    resources,
+    searchTerm,
+    typeFilters,
+    activeTab,
+    availableOnly,
+    minQuantity,
+    sortBy,
+    sortDirection,
+    selectedEmergency,
+  ])
+
+  const filteredResources = getFilteredResources()
 
   const handleDispatch = async () => {
     if (!selectedResource || !selectedEmergency) {
@@ -253,7 +310,7 @@ export function ResourcePanel({
     }
   }
 
-  const canDispatch = () => {
+  const canDispatch = useCallback(() => {
     if (!selectedResource || !selectedEmergency) return false
     if (dispatchQuantity <= 0) return false
     if (dispatchQuantity > selectedResource.quantity) return false
@@ -267,39 +324,43 @@ export function ResourcePanel({
     if (!needsThisType) return false
 
     return true
-  }
+  }, [selectedResource, selectedEmergency, dispatchQuantity, getRemainingNeededByType])
 
   // Calculate distance between selected resource and emergency
-  const selectedDistance =
-    selectedResource && selectedEmergency
-      ? calculateDistance(
-          selectedResource.latitude,
-          selectedResource.longitude,
-          selectedEmergency.latitude,
-          selectedEmergency.longitude,
-        )
-      : 0
+  const selectedDistance = useMemo(() => {
+    if (!selectedResource || !selectedEmergency) return 0
 
-  // Get resource rating based on distance and availability
-  const getResourceRating = (resource: EmergencyResource) => {
-    if (!selectedEmergency) return null
-
-    const distance = calculateDistance(
-      resource.latitude,
-      resource.longitude,
+    return calculateDistance(
+      selectedResource.latitude,
+      selectedResource.longitude,
       selectedEmergency.latitude,
       selectedEmergency.longitude,
     )
+  }, [selectedResource, selectedEmergency])
 
-    // Simple rating algorithm: closer is better, more available units is better
-    if (distance < 0.1) return "Excellent"
-    if (distance < 0.3) return "Good"
-    if (distance < 0.5) return "Fair"
-    return "Poor"
-  }
+  // Get resource rating based on distance and availability
+  const getResourceRating = useCallback(
+    (resource: EmergencyResource) => {
+      if (!selectedEmergency) return null
+
+      const distance = calculateDistance(
+        resource.latitude,
+        resource.longitude,
+        selectedEmergency.latitude,
+        selectedEmergency.longitude,
+      )
+
+      // Simple rating algorithm: closer is better, more available units is better
+      if (distance < 0.1) return "Excellent"
+      if (distance < 0.3) return "Good"
+      if (distance < 0.5) return "Fair"
+      return "Poor"
+    },
+    [selectedEmergency],
+  )
 
   // Get color for rating
-  const getRatingColor = (rating: string | null) => {
+  const getRatingColor = useCallback((rating: string | null) => {
     if (!rating) return ""
     switch (rating) {
       case "Excellent":
@@ -313,31 +374,34 @@ export function ResourcePanel({
       default:
         return ""
     }
-  }
+  }, [])
 
   // Toggle a type filter
-  const toggleTypeFilter = (type: EmergencyType) => {
-    setTypeFilters((prev) => ({
-      ...prev,
-      [type]: !prev[type],
-    }))
+  const toggleTypeFilter = useCallback(
+    (type: EmergencyType) => {
+      setTypeFilters((prev) => ({
+        ...prev,
+        [type]: !prev[type],
+      }))
 
-    // If we're toggling the current tab off, switch to another active tab
-    if (type === activeTab && typeFilters[type]) {
-      const nextActiveType =
-        Object.entries(typeFilters)
-          .filter(([t, active]) => t !== type && active)
-          .map(([t]) => t as EmergencyType)[0] || "Medical"
+      // If we're toggling the current tab off, switch to another active tab
+      if (type === activeTab && typeFilters[type]) {
+        const nextActiveType =
+          Object.entries(typeFilters)
+            .filter(([t, active]) => t !== type && active)
+            .map(([t]) => t as EmergencyType)[0] || "Medical"
 
-      setActiveTab(nextActiveType)
-    }
-  }
+        setActiveTab(nextActiveType)
+      }
+    },
+    [activeTab, typeFilters],
+  )
 
   // Check if all filters are selected
   const allFiltersSelected = Object.values(typeFilters).every(Boolean)
 
   // Toggle all filters
-  const toggleAllFilters = () => {
+  const toggleAllFilters = useCallback(() => {
     const newValue = !allFiltersSelected
     setTypeFilters({
       Medical: newValue,
@@ -346,10 +410,10 @@ export function ResourcePanel({
       Rescue: newValue,
       Utility: newValue,
     })
-  }
+  }, [allFiltersSelected])
 
   // Get the icon for a resource type
-  const getResourceTypeIcon = (type: EmergencyType) => {
+  const getResourceTypeIcon = useCallback((type: EmergencyType) => {
     switch (type) {
       case "Medical":
         return <Ambulance className="h-5 w-5 text-red-500 mr-2" />
@@ -380,16 +444,32 @@ export function ResourcePanel({
       default:
         return <div className="h-5 w-5 bg-gray-500 rounded-full mr-2"></div>
     }
-  }
+  }, [])
 
   // Count resources by type
-  const resourceCounts = resources.reduce(
-    (counts, resource) => {
-      counts[resource.type] = (counts[resource.type] || 0) + 1
-      return counts
-    },
-    {} as Record<EmergencyType, number>,
-  )
+  const resourceCounts = useMemo(() => {
+    return resources.reduce(
+      (counts, resource) => {
+        counts[resource.type] = (counts[resource.type] || 0) + 1
+        return counts
+      },
+      {} as Record<EmergencyType, number>,
+    )
+  }, [resources])
+
+  // Clear search
+  const clearSearch = () => {
+    setSearchTerm("")
+  }
+
+  // Reset filters
+  const resetFilters = () => {
+    setAvailableOnly(true)
+    setMinQuantity(0)
+    setSortBy("distance")
+    setSortDirection("asc")
+    setShowAdvancedFilters(false)
+  }
 
   return (
     <Card>
@@ -399,55 +479,101 @@ export function ResourcePanel({
             {getResourceTypeIcon(activeTab)}
             Available Resources
           </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-8 px-2">
-                <Filter className="h-4 w-4 mr-1" />
-                Filter
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuCheckboxItem checked={allFiltersSelected} onCheckedChange={toggleAllFilters}>
-                All Types
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem
-                checked={typeFilters.Medical}
-                onCheckedChange={() => toggleTypeFilter("Medical")}
-              >
-                <div className="flex items-center">
-                  <div className="w-3 h-3 rounded-full bg-red-500 mr-2"></div>
-                  Medical ({resourceCounts.Medical || 0})
-                </div>
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={typeFilters.Police} onCheckedChange={() => toggleTypeFilter("Police")}>
-                <div className="flex items-center">
-                  <div className="w-3 h-3 rounded-full bg-blue-500 mr-2"></div>
-                  Police ({resourceCounts.Police || 0})
-                </div>
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={typeFilters.Fire} onCheckedChange={() => toggleTypeFilter("Fire")}>
-                <div className="flex items-center">
-                  <div className="w-3 h-3 rounded-full bg-orange-500 mr-2"></div>
-                  Fire ({resourceCounts.Fire || 0})
-                </div>
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={typeFilters.Rescue} onCheckedChange={() => toggleTypeFilter("Rescue")}>
-                <div className="flex items-center">
-                  <div className="w-3 h-3 rounded-full bg-yellow-500 mr-2"></div>
-                  Rescue ({resourceCounts.Rescue || 0})
-                </div>
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem
-                checked={typeFilters.Utility}
-                onCheckedChange={() => toggleTypeFilter("Utility")}
-              >
-                <div className="flex items-center">
-                  <div className="w-3 h-3 rounded-full bg-green-500 mr-2"></div>
-                  Utility ({resourceCounts.Utility || 0})
-                </div>
-              </DropdownMenuCheckboxItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <div className="flex gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="h-8 px-2">
+                  <Filter className="h-4 w-4 mr-1" />
+                  Filter
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>Resource Types</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuCheckboxItem checked={allFiltersSelected} onCheckedChange={toggleAllFilters}>
+                  All Types
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuCheckboxItem
+                  checked={typeFilters.Medical}
+                  onCheckedChange={() => toggleTypeFilter("Medical")}
+                >
+                  <div className="flex items-center">
+                    <div className="w-3 h-3 rounded-full bg-red-500 mr-2"></div>
+                    Medical ({resourceCounts.Medical || 0})
+                  </div>
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={typeFilters.Police}
+                  onCheckedChange={() => toggleTypeFilter("Police")}
+                >
+                  <div className="flex items-center">
+                    <div className="w-3 h-3 rounded-full bg-blue-500 mr-2"></div>
+                    Police ({resourceCounts.Police || 0})
+                  </div>
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem checked={typeFilters.Fire} onCheckedChange={() => toggleTypeFilter("Fire")}>
+                  <div className="flex items-center">
+                    <div className="w-3 h-3 rounded-full bg-orange-500 mr-2"></div>
+                    Fire ({resourceCounts.Fire || 0})
+                  </div>
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={typeFilters.Rescue}
+                  onCheckedChange={() => toggleTypeFilter("Rescue")}
+                >
+                  <div className="flex items-center">
+                    <div className="w-3 h-3 rounded-full bg-yellow-500 mr-2"></div>
+                    Rescue ({resourceCounts.Rescue || 0})
+                  </div>
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={typeFilters.Utility}
+                  onCheckedChange={() => toggleTypeFilter("Utility")}
+                >
+                  <div className="flex items-center">
+                    <div className="w-3 h-3 rounded-full bg-green-500 mr-2"></div>
+                    Utility ({resourceCounts.Utility || 0})
+                  </div>
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuCheckboxItem checked={availableOnly} onCheckedChange={setAvailableOnly}>
+                  Show available only
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <SortAsc className="h-4 w-4 mr-2" />
+                    Sort by
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuRadioGroup value={sortBy} onValueChange={(value) => setSortBy(value as SortOption)}>
+                      <DropdownMenuRadioItem value="distance">Distance</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="quantity">Quantity</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="name">City Name</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="county">County</DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => setSortDirection(sortDirection === "asc" ? "desc" : "asc")}>
+                      {sortDirection === "asc" ? (
+                        <SortAsc className="h-4 w-4 mr-2" />
+                      ) : (
+                        <SortDesc className="h-4 w-4 mr-2" />
+                      )}
+                      {sortDirection === "asc" ? "Ascending" : "Descending"}
+                    </DropdownMenuItem>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}>
+                  <Sliders className="h-4 w-4 mr-2" />
+                  {showAdvancedFilters ? "Hide" : "Show"} Advanced Filters
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={resetFilters}>Reset All Filters</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -486,14 +612,43 @@ export function ResourcePanel({
           </TabsList>
         </Tabs>
 
-        <div>
+        <div className="relative">
           <Input
             placeholder="Search by city or county..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full"
+            className="w-full pr-8"
           />
+          {searchTerm && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="absolute right-2 top-1/2 -translate-y-1/2 h-6 w-6 p-0"
+              onClick={clearSearch}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          )}
         </div>
+
+        {showAdvancedFilters && (
+          <div className="p-3 bg-gray-50 rounded-md space-y-3">
+            <h4 className="text-sm font-medium">Advanced Filters</h4>
+            <div>
+              <Label htmlFor="minQuantity" className="text-xs">
+                Minimum Quantity
+              </Label>
+              <Input
+                id="minQuantity"
+                type="number"
+                min={0}
+                value={minQuantity}
+                onChange={(e) => setMinQuantity(Number.parseInt(e.target.value) || 0)}
+                className="h-8 mt-1"
+              />
+            </div>
+          </div>
+        )}
 
         {selectedEmergency && (
           <div className="bg-blue-50 p-2 rounded-md border border-blue-100">

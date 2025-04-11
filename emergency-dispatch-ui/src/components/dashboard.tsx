@@ -40,6 +40,7 @@ import { Clock, AlertCircle, BarChart3 } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { ResourceStats } from "./resource-stats"
 import { ResourcePanel } from "./resource-panel"
+import { HealthCheck } from "./health-check"
 
 export default function Dashboard() {
   const [locations, setLocations] = useState<Location[]>([])
