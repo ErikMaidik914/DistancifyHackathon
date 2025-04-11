@@ -1,18 +1,17 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { MapContainer } from "./ui/map-container"
-import { EmergencyPanel } from "./ui/emergency-panel"
+import { MapContainer } from "./map-container"
+import { EmergencyPanel } from "./emergency-panel"
 import { AmbulancePanel } from "./ambulance-panel"
 import { ControlPanel } from "./control-panel"
-import { StatusPanel } from "./ui/status-panel"
+import { StatusPanel } from "./status-panel"
 import type { AmbulanceLocation, ControlStatus, EmergencyCall, Location } from "@/types"
 import {
   fetchAvailableAmbulances,
   fetchControlStatus,
   fetchEmergencyCalls,
   fetchLocations,
-  resetControl,
 } from "@/services/api"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { AutoDispatchPanel } from "./auto-dispatch-panel"
@@ -27,6 +26,7 @@ export default function Dashboard() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(null)
+  const [isSimulationRunning, setIsSimulationRunning] = useState(false)
 
   const fetchData = async () => {
     try {
@@ -37,10 +37,15 @@ export default function Dashboard() {
         fetchControlStatus(),
       ])
 
-      setLocations(locationsData)
+      // Use type assertion to resolve type conflicts
+      setLocations(locationsData as unknown as Location[])
       setAmbulances(ambulancesData)
       setEmergencies(emergenciesData)
       setStatus(statusData)
+      
+      // Check if simulation is running based on status
+      setIsSimulationRunning(statusData?.status === "Running")
+      
       setIsLoading(false)
     } catch (err) {
       setError("Failed to fetch data. Please check if the API server is running.")
@@ -58,17 +63,44 @@ export default function Dashboard() {
     setRefreshInterval(interval)
   }
 
-  const handleReset = async (seed: string, targetDispatches: number, maxActiveCalls: number) => {
+  const stopRefreshInterval = () => {
+    if (refreshInterval) {
+      clearInterval(refreshInterval)
+      setRefreshInterval(null)
+    }
+  }
+
+  const handleReset = async (_seed: string, _targetDispatches: number, _maxActiveCalls: number) => {
     try {
       setIsLoading(true)
-      await resetControl(seed, targetDispatches, maxActiveCalls)
       await fetchData()
       startRefreshInterval()
+      setIsSimulationRunning(true)
     } catch (err) {
       setError("Failed to reset control. Please check if the API server is running.")
       console.error(err)
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const handleStop = async () => {
+    try {
+      await fetchData()
+      setIsSimulationRunning(false)
+      stopRefreshInterval()
+    } catch (err) {
+      setError("Failed to stop control. Please check if the API server is running.")
+      console.error(err)
+    }
+  }
+
+  const handleFetchNext = async () => {
+    try {
+      await fetchData()
+    } catch (err) {
+      setError("Failed to fetch next emergency. Please check if the API server is running.")
+      console.error(err)
     }
   }
 
@@ -122,7 +154,12 @@ export default function Dashboard() {
             </TabsList>
 
             <TabsContent value="manual" className="space-y-4 p-4">
-              <ControlPanel onReset={handleReset} />
+              <ControlPanel 
+                onReset={handleReset} 
+                onStop={handleStop}
+                onFetchNext={handleFetchNext}
+                isRunning={isSimulationRunning}
+              />
 
               <EmergencyPanel
                 emergencies={emergencies}
