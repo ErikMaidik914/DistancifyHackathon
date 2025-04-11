@@ -85,20 +85,25 @@ export default function Map({
   const [isLoadingNearby, setIsLoadingNearby] = useState(false)
   const [clickedLocationName, setClickedLocationName] = useState<string | null>(null)
 
-  // Use basic icons instead of custom ones
-  const ambulanceIcon = new L.DivIcon({
-    className: "custom-div-icon",
-    html: `<div style="background-color: #3b82f6; width: 20px; height: 20px; border-radius: 50%; display: flex; justify-content: center; align-items: center; color: white; font-weight: bold; border: 2px solid white;">A</div>`,
-    iconSize: [20, 20],
-    iconAnchor: [10, 10],
-  })
+  // Remove the useMap() hook from here - it's outside of MapContainer context
+  // const map = useMap() - THIS IS THE PROBLEM
 
-  const emergencyIcon = new L.DivIcon({
-    className: "custom-div-icon",
-    html: `<div style="background-color: #ef4444; width: 20px; height: 20px; border-radius: 50%; display: flex; justify-content: center; align-items: center; color: white; font-weight: bold; border: 2px solid white;">E</div>`,
-    iconSize: [20, 20],
-    iconAnchor: [10, 10],
-  })
+  // Create basic icons for markers
+  const createAmbulanceIcon = () =>
+    new L.DivIcon({
+      className: "custom-div-icon",
+      html: `<div style="background-color: #3b82f6; width: 20px; height: 20px; border-radius: 50%; display: flex; justify-content: center; align-items: center; color: white; font-weight: bold; border: 2px solid white;">A</div>`,
+      iconSize: [20, 20],
+      iconAnchor: [10, 10],
+    })
+
+  const createEmergencyIcon = () =>
+    new L.DivIcon({
+      className: "custom-div-icon",
+      html: `<div style="background-color: #ef4444; width: 20px; height: 20px; border-radius: 50%; display: flex; justify-content: center; align-items: center; color: white; font-weight: bold; border: 2px solid white;">E</div>`,
+      iconSize: [20, 20],
+      iconAnchor: [10, 10],
+    })
 
   const handleLocationClick = async (lat: number, lng: number) => {
     setClickedLocation({ lat, lng })
@@ -145,6 +150,24 @@ export default function Map({
     setClickedLocationName(null)
   }
 
+  // Create a MapController component to handle map instance operations
+  const MapController = () => {
+    const map = useMap()
+
+    useEffect(() => {
+      // If all data is cleared, reset the map view
+      if (locations.length === 0 && ambulances.length === 0 && emergencies.length === 0) {
+        map.setView([45.9443, 25.0094], 7) // Default view for Romania
+      }
+    }, [map, locations, ambulances, emergencies])
+
+    return null
+  }
+
+  // Use the icons
+  const ambulanceIcon = createAmbulanceIcon()
+  const emergencyIcon = createEmergencyIcon()
+
   return (
     <div className="h-full w-full relative">
       <MapContainer
@@ -156,6 +179,9 @@ export default function Map({
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
+
+        {/* Add the MapController component inside MapContainer */}
+        <MapController />
 
         <MapBoundsAdjuster locations={locations} ambulances={ambulances} emergencies={emergencies} />
         <MapClickHandler onLocationClick={handleLocationClick} />

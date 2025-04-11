@@ -34,11 +34,13 @@ export function StatusPanel({ status, isLoading, error }: StatusPanelProps) {
     )
   }
 
-  if (!status) {
+  if (!status || status.status !== "Running") {
     return (
       <Card className="m-4">
         <CardContent className="p-4 text-center text-gray-500">
-          No simulation running. Start a simulation to see status.
+          {!status
+            ? "No simulation running. Start a simulation to see status."
+            : "Simulation stopped. Start a new simulation to see status."}
         </CardContent>
       </Card>
     )

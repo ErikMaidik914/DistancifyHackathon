@@ -1,13 +1,20 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import type { EmergencyCall, EmergencyStatus } from "@/types"
+import type { EmergencyCall, EmergencyStatus, EmergencyType } from "@/types"
+import { EMERGENCY_TYPE_COLORS } from "@/types"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
-import { AlertCircle, Loader2 } from "lucide-react"
-import { Badge } from "./ui/badge"
-import { Progress } from "./ui/progress"
+import { AlertCircle, Loader2, Filter } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
+import { Progress } from "@/components/ui/progress"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuCheckboxItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 
 interface EmergencyPanelProps {
   emergencies: EmergencyCall[]
@@ -19,6 +26,13 @@ export function EmergencyPanel({ emergencies, onSelect, selectedEmergency }: Eme
   const [isUpdating, setIsUpdating] = useState(false)
   const [prevEmergencyCount, setPrevEmergencyCount] = useState(0)
   const [highlightedEmergencies, setHighlightedEmergencies] = useState<Record<string, boolean>>({})
+  const [typeFilters, setTypeFilters] = useState<Record<EmergencyType, boolean>>({
+    Medical: true,
+    Police: true,
+    Fire: true,
+    Rescue: true,
+    Utility: true,
+  })
 
   // Detect changes in emergencies to highlight new or updated ones
   useEffect(() => {
@@ -58,10 +72,29 @@ export function EmergencyPanel({ emergencies, onSelect, selectedEmergency }: Eme
     return highlightedEmergencies[id]
   }
 
-  // Calculate emergency status (total, dispatched, remaining)
+  // Calculate emergency status (total, dispatched, remaining) for a specific type
+  const getEmergencyStatusByType = (emergency: EmergencyCall, type: EmergencyType): EmergencyStatus => {
+    // Find requests of this type
+    const typeRequests = emergency.requests.filter((req) => req.Type === type)
+    const total = typeRequests.reduce((sum, req) => sum + req.Quantity, 0)
+
+    // Get dispatched count for this type
+    const dispatched = (emergency.dispatched as unknown as Record<EmergencyType, number>)?.[type] || 0
+    const remaining = Math.max(0, total - dispatched)
+
+    return { total, dispatched, remaining }
+  }
+
+  // Calculate overall emergency status (total, dispatched, remaining)
   const getEmergencyStatus = (emergency: EmergencyCall): EmergencyStatus => {
     const total = emergency.requests.reduce((sum, req) => sum + req.Quantity, 0)
-    const dispatched = emergency.dispatched || 0
+
+    // Sum up dispatched counts across all types
+    const dispatched = Object.values((emergency.dispatched as unknown as Record<EmergencyType, number>) || {}).reduce(
+      (sum, count) => sum + count,
+      0,
+    )
+
     const remaining = Math.max(0, total - dispatched)
 
     return { total, dispatched, remaining }
@@ -80,24 +113,144 @@ export function EmergencyPanel({ emergencies, onSelect, selectedEmergency }: Eme
     return (status.dispatched / status.total) * 100
   }
 
+
+  // Filter emergencies based on selected types
+  const filteredEmergencies = emergencies.filter((emergency) => {
+    // Check if any of the emergency's request types match our active filters
+    return emergency.requests.some((req) => typeFilters[req.Type])
+  })
+
+  // Toggle a type filter
+  const toggleTypeFilter = (type: EmergencyType) => {
+    setTypeFilters((prev) => ({
+      ...prev,
+      [type]: !prev[type],
+    }))
+  }
+
+  // Check if all filters are selected
+  const allFiltersSelected = Object.values(typeFilters).every(Boolean)
+
+  // Check if no filters are selected
+  const noFiltersSelected = Object.values(typeFilters).every((value) => !value)
+
+  // Toggle all filters
+  const toggleAllFilters = () => {
+    const newValue = !allFiltersSelected
+    setTypeFilters({
+      Medical: newValue,
+      Police: newValue,
+      Fire: newValue,
+      Rescue: newValue,
+      Utility: newValue,
+    })
+  }
+
+  // Get emergency type badges
+  const getEmergencyTypeBadges = (emergency: EmergencyCall) => {
+    // Get unique types from requests
+    const types = [...new Set(emergency.requests.map((req) => req.Type))]
+
+    return types.map((type) => {
+      const status = getEmergencyStatusByType(emergency, type)
+      const bgColor = EMERGENCY_TYPE_COLORS[type]
+
+      return (
+        <Badge
+          key={type}
+          variant="outline"
+          className="mr-1 mb-1"
+          style={{
+            backgroundColor: `${bgColor}20`,
+            borderColor: bgColor,
+            color: bgColor,
+          }}
+        >
+          {type}: {status.remaining}/{status.total}
+        </Badge>
+      )
+    })
+  }
+
   return (
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-lg flex items-center justify-between">
           <div className="flex items-center">
             <AlertCircle className="h-5 w-5 text-red-500 mr-2" />
-            Emergencies ({emergencies.length})
+            Emergencies ({filteredEmergencies.length})
           </div>
-          {isUpdating && <Loader2 className="h-4 w-4 animate-spin text-blue-500" />}
+          <div className="flex items-center">
+            {isUpdating && <Loader2 className="h-4 w-4 animate-spin text-blue-500 mr-2" />}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="h-8 px-2">
+                  <Filter className="h-4 w-4 mr-1" />
+                  Filter
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuCheckboxItem checked={allFiltersSelected} onCheckedChange={toggleAllFilters}>
+                  All Types
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={typeFilters.Medical}
+                  onCheckedChange={() => toggleTypeFilter("Medical")}
+                >
+                  <div className="flex items-center">
+                    <div className="w-3 h-3 rounded-full bg-red-500 mr-2"></div>
+                    Medical
+                  </div>
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={typeFilters.Police}
+                  onCheckedChange={() => toggleTypeFilter("Police")}
+                >
+                  <div className="flex items-center">
+                    <div className="w-3 h-3 rounded-full bg-blue-500 mr-2"></div>
+                    Police
+                  </div>
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem checked={typeFilters.Fire} onCheckedChange={() => toggleTypeFilter("Fire")}>
+                  <div className="flex items-center">
+                    <div className="w-3 h-3 rounded-full bg-orange-500 mr-2"></div>
+                    Fire
+                  </div>
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={typeFilters.Rescue}
+                  onCheckedChange={() => toggleTypeFilter("Rescue")}
+                >
+                  <div className="flex items-center">
+                    <div className="w-3 h-3 rounded-full bg-yellow-500 mr-2"></div>
+                    Rescue
+                  </div>
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={typeFilters.Utility}
+                  onCheckedChange={() => toggleTypeFilter("Utility")}
+                >
+                  <div className="flex items-center">
+                    <div className="w-3 h-3 rounded-full bg-green-500 mr-2"></div>
+                    Utility
+                  </div>
+                </DropdownMenuCheckboxItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent className="p-0">
         <ScrollArea className="h-[200px]">
-          {emergencies.length === 0 ? (
-            <div className="p-4 text-center text-gray-500">No active emergencies</div>
+          {filteredEmergencies.length === 0 ? (
+            <div className="p-4 text-center text-gray-500">
+              {noFiltersSelected
+                ? "No filters selected. Please select at least one emergency type."
+                : "No active emergencies"}
+            </div>
           ) : (
             <div className="space-y-1 p-2">
-              {emergencies.map((emergency, index) => {
+              {filteredEmergencies.map((emergency, index) => {
                 const status = getEmergencyStatus(emergency)
                 const isSelected =
                   selectedEmergency &&
@@ -125,9 +278,10 @@ export function EmergencyPanel({ emergencies, onSelect, selectedEmergency }: Eme
                         )}
                       </div>
                       <div className="text-sm text-muted-foreground mt-1">
+                        <div className="flex flex-wrap mb-1">{getEmergencyTypeBadges(emergency)}</div>
                         <div className="flex justify-between mb-1">
                           <span>
-                            Ambulances needed: <span className="font-semibold text-red-500">{status.remaining}</span>
+                            Total needed: <span className="font-semibold text-red-500">{status.remaining}</span>
                             {status.dispatched > 0 && <span className="text-gray-500"> (of {status.total})</span>}
                           </span>
                           {status.remaining === 0 && (

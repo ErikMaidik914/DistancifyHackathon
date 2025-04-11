@@ -5,13 +5,14 @@ import type { AmbulanceLocation, EmergencyCall } from "@/types"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
-import { Ambulance, ArrowRight, Loader2, CheckCircle2 } from "lucide-react"
+import { Ambulance, ArrowRight, Loader2, CheckCircle2, AlertCircle } from "lucide-react"
 import { calculateDistance } from "@/utils/distance"
 import { dispatchAmbulance } from "@/services/api"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
+import { logger } from "./logger"
 
 interface AmbulancePanelProps {
   ambulances: AmbulanceLocation[]
@@ -32,6 +33,7 @@ export function AmbulancePanel({
   const [dispatchQuantity, setDispatchQuantity] = useState(1)
   const [isDispatching, setIsDispatching] = useState(false)
   const [suggestedAmbulance, setSuggestedAmbulance] = useState<AmbulanceLocation | null>(null)
+  const [dispatchError, setDispatchError] = useState<string | null>(null)
 
   // Calculate the remaining ambulances needed for the selected emergency
   const getRemainingNeeded = () => {
@@ -86,6 +88,9 @@ export function AmbulancePanel({
     } else {
       setSuggestedAmbulance(null)
     }
+
+    // Clear any previous dispatch errors when selection changes
+    setDispatchError(null)
   }, [selectedEmergency, ambulances, selectedAmbulance, onSelect])
 
   const filteredAmbulances = ambulances
@@ -114,7 +119,13 @@ export function AmbulancePanel({
     })
 
   const handleDispatch = async () => {
-    if (!selectedAmbulance || !selectedEmergency) return
+    if (!selectedAmbulance || !selectedEmergency) {
+      setDispatchError("No ambulance or emergency selected")
+      return
+    }
+
+    // Clear any previous errors
+    setDispatchError(null)
 
     try {
       setIsDispatching(true)
@@ -127,7 +138,17 @@ export function AmbulancePanel({
         selectedEmergency.longitude,
       )
 
-      // Make sure the dispatch request format matches what the API expects
+      // Log the dispatch attempt with detailed information
+      logger.info("Attempting to dispatch ambulance", {
+        sourceCounty: selectedAmbulance.county,
+        sourceCity: selectedAmbulance.city,
+        targetCounty: selectedEmergency.county,
+        targetCity: selectedEmergency.city,
+        quantity: dispatchQuantity,
+        distance: distance,
+      })
+
+      // Make the API call with the correctly formatted request
       const response = await dispatchAmbulance({
         sourceCounty: selectedAmbulance.county,
         sourceCity: selectedAmbulance.city,
@@ -136,27 +157,50 @@ export function AmbulancePanel({
         quantity: dispatchQuantity,
       })
 
-      // Check if the response indicates success
-      const parsedResponse = typeof response === "string" ? JSON.parse(response) : response;
-      if (parsedResponse && !parsedResponse.error) {
-        toast.success("Ambulance Dispatched", {
-          description: `Successfully dispatched ${dispatchQuantity} ambulance(s) from ${selectedAmbulance.city} to ${selectedEmergency.city}`,
-        })
+      // Log the successful dispatch
+      logger.info("Ambulance dispatched successfully", {
+        response,
+        from: `${selectedAmbulance.city}, ${selectedAmbulance.county}`,
+        to: `${selectedEmergency.city}, ${selectedEmergency.county}`,
+        quantity: dispatchQuantity,
+      })
 
-        // Pass the distance to the parent component
-        onDispatchSuccess(selectedAmbulance.city, selectedEmergency.city, dispatchQuantity, distance * dispatchQuantity)
-      } else {
-        // Handle API error response
-        const errorMessage = parsedResponse?.error || "Unknown error occurred during dispatch"
-        toast.error("Dispatch Failed", {
-          description: errorMessage,
-        })
-        console.error("Dispatch API error:", errorMessage)
-      }
+      // Show success toast
+      toast.success("Ambulance Dispatched", {
+        description: `Successfully dispatched ${dispatchQuantity} ambulance(s) from ${selectedAmbulance.city} to ${selectedEmergency.city}`,
+      })
+
+      // Update the UI via the parent component
+      onDispatchSuccess(selectedAmbulance.city, selectedEmergency.city, dispatchQuantity, distance * dispatchQuantity)
     } catch (error) {
+      // Handle the error and provide a user-friendly message
       console.error("Dispatch error:", error)
+
+      let errorMessage = "Failed to dispatch ambulance. Please try again."
+
+      if (error instanceof Error) {
+        // Extract more specific error details if available
+        if (error.message.includes("400")) {
+          errorMessage = "Invalid dispatch request format. Please check the data and try again."
+          logger.error("Invalid dispatch request format", { error: error.message })
+        } else if (error.message.includes("404")) {
+          errorMessage = "Ambulance or emergency location not found in the system."
+          logger.error("Resource not found during dispatch", { error: error.message })
+        } else if (error.message.includes("500")) {
+          errorMessage = "Server error occurred. Please try again later."
+          logger.error("Server error during dispatch", { error: error.message })
+        } else if (error.message.includes("fetch failed")) {
+          errorMessage = "Network error. Please check your connection and try again."
+          logger.error("Network error during dispatch", { error: error.message })
+        }
+
+        // Set the error message for display in the UI
+        setDispatchError(errorMessage)
+      }
+
+      // Show error toast
       toast.error("Dispatch Failed", {
-        description: "Failed to dispatch ambulance. Please try again.",
+        description: errorMessage,
       })
     } finally {
       setIsDispatching(false)
@@ -368,7 +412,19 @@ export function AmbulancePanel({
                 />
               </div>
 
-              <Button className="w-full" onClick={handleDispatch} disabled={!canDispatch() || isDispatching}>
+              {dispatchError && (
+                <div className="bg-red-50 border border-red-200 rounded-md p-2 text-sm text-red-600 flex items-start">
+                  <AlertCircle className="h-4 w-4 mr-2 mt-0.5 flex-shrink-0" />
+                  <span>{dispatchError}</span>
+                </div>
+              )}
+
+              <Button
+                className="w-full"
+                onClick={handleDispatch}
+                disabled={!canDispatch() || isDispatching}
+                aria-label="Dispatch Ambulance"
+              >
                 {isDispatching ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />

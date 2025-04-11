@@ -1,6 +1,6 @@
 "use client"
 import dynamic from "next/dynamic"
-import type { AmbulanceLocation, EmergencyCall, Location } from "@/types"
+import type { EmergencyResource, EmergencyCall, Location } from "@/types"
 
 // Create a placeholder component to show while the map is loading
 function MapPlaceholder() {
@@ -15,17 +15,17 @@ function MapPlaceholder() {
 }
 
 // Define the props interface
-interface LeafletMapProps {
+export interface LeafletMapProps {
   locations: Location[]
-  ambulances: AmbulanceLocation[]
+  resources: EmergencyResource[] // Changed from ambulances to resources
   emergencies: EmergencyCall[]
   selectedEmergency: EmergencyCall | null
-  selectedAmbulance: AmbulanceLocation | null
+  selectedResource: EmergencyResource | null // Changed from selectedAmbulance to selectedResource
 }
 
 // Dynamically import the map component with SSR disabled
 // This is crucial - we're not importing any Leaflet code at the top level
-const MapWithNoSSR = dynamic(() => import("./map"), {
+const MapWithNoSSR = dynamic(() => import("./leaflet-map-component"), {
   loading: MapPlaceholder,
   ssr: false, // Disable server-side rendering
 })
