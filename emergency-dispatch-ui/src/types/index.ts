@@ -1,4 +1,3 @@
-// types/index.ts
 export interface Location {
     name: string
     county: string
@@ -20,6 +19,7 @@ export interface Location {
     latitude: number
     longitude: number
     requests: { Quantity: number }[]
+    dispatched?: number // Track how many ambulances have been dispatched to this emergency
   }
   
   export interface ControlStatus {
@@ -50,10 +50,17 @@ export interface Location {
     status_interval: number
   }
   
+  // Update the DispatchRequest interface to match the API expectations
   export interface DispatchRequest {
-    sourceCounty: string
-    sourceCity: string
-    targetCounty: string
-    targetCity: string
+    from: string
+    to: string
     quantity: number
   }
+  
+  // New interface for tracking emergency status
+  export interface EmergencyStatus {
+    total: number
+    dispatched: number
+    remaining: number
+  }
+  

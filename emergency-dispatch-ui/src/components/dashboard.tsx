@@ -22,6 +22,7 @@ import { AutoDispatchPanel } from "./auto-dispatch-panel"
 import { toast } from "sonner"
 import { logger } from "./logger"
 import { Card, CardContent } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
 
 export default function Dashboard() {
   const [locations, setLocations] = useState<Location[]>([])
@@ -37,6 +38,8 @@ export default function Dashboard() {
   const [isAutoDispatch, setIsAutoDispatch] = useState(false)
   const [activeTab, setActiveTab] = useState("manual")
   const [isStoppingSimulation, setIsStoppingSimulation] = useState(false)
+  const [autoFetchEnabled, setAutoFetchEnabled] = useState(false)
+  const [autoFetchInterval, setAutoFetchInterval] = useState<NodeJS.Timeout | null>(null)
 
   // Local progress tracking
   const [totalDispatched, setTotalDispatched] = useState(0)
@@ -121,8 +124,29 @@ export default function Dashboard() {
     try {
       const emergenciesData = await fetchEmergencyCalls()
 
-      // Update the emergencies state
-      setEmergencies(emergenciesData)
+      // Update the emergencies state, preserving dispatched counts
+      setEmergencies((prevEmergencies) => {
+        return emergenciesData.map((newEmergency) => {
+          // Try to find this emergency in the previous list
+          const prevEmergency = prevEmergencies.find(
+            (e) => e.city === newEmergency.city && e.county === newEmergency.county,
+          )
+
+          // If found, preserve the dispatched count
+          if (prevEmergency && prevEmergency.dispatched) {
+            return {
+              ...newEmergency,
+              dispatched: prevEmergency.dispatched,
+            }
+          }
+
+          // Otherwise, initialize dispatched to 0
+          return {
+            ...newEmergency,
+            dispatched: 0,
+          }
+        })
+      })
 
       // If we have a selected emergency, check if it needs to be updated
       if (selectedEmergency) {
@@ -132,7 +156,11 @@ export default function Dashboard() {
 
         if (updatedEmergency) {
           // Update the selected emergency with the latest data
-          setSelectedEmergency(updatedEmergency)
+          // but preserve the dispatched count
+          setSelectedEmergency({
+            ...updatedEmergency,
+            dispatched: selectedEmergency.dispatched || 0,
+          })
         } else {
           // If the emergency is no longer in the queue, deselect it
           setSelectedEmergency(null)
@@ -213,6 +241,55 @@ export default function Dashboard() {
       setRefreshInterval(null)
     }
   }, [refreshInterval])
+
+  // Fix the auto-fetch emergencies feature
+  // Update the useEffect for auto-fetch
+
+  // Auto-fetch emergencies when enabled
+  useEffect(() => {
+    if (autoFetchEnabled && isSimulationRunning && !isAutoDispatch) {
+      // Clear any existing interval
+      if (autoFetchInterval) {
+        clearInterval(autoFetchInterval)
+      }
+
+      // Set up new interval to check and fetch emergencies
+      const interval = setInterval(async () => {
+        try {
+          // Check current status
+          const statusData = await fetchControlStatus()
+
+          // Only fetch next emergency if we're below the threshold
+          if (statusData && statusData.status === "Running" && statusData.requestCount < statusData.maxActiveCalls) {
+            logger.info("Auto-fetching next emergency", {
+              currentCount: statusData.requestCount,
+              maxCount: statusData.maxActiveCalls,
+            })
+
+            await fetchNextEmergency()
+            await fetchEmergenciesQueue()
+
+            toast.success("Auto-fetched Emergency", {
+              description: "Automatically fetched next emergency",
+              duration: 2000,
+            })
+          }
+        } catch (error) {
+          logger.error("Auto-fetch error", { error })
+        }
+      }, 5000) // Check every 5 seconds
+
+      setAutoFetchInterval(interval)
+
+      return () => {
+        clearInterval(interval)
+      }
+    } else if (autoFetchInterval) {
+      // Clean up interval if auto-fetch is disabled
+      clearInterval(autoFetchInterval)
+      setAutoFetchInterval(null)
+    }
+  }, [autoFetchEnabled, isSimulationRunning, isAutoDispatch, fetchEmergenciesQueue])
 
   // Save simulation state to localStorage
   const saveSimulationState = useCallback(
@@ -327,6 +404,9 @@ export default function Dashboard() {
       setIsSimulationRunning(false)
       stopRefreshInterval()
 
+      // Disable auto-fetch
+      setAutoFetchEnabled(false)
+
       logger.info("Simulation stopped")
 
       toast.success("Simulation Stopped", {
@@ -372,6 +452,7 @@ export default function Dashboard() {
       city: emergency.city,
       county: emergency.county,
       needed: emergency.requests.reduce((sum, req) => sum + req.Quantity, 0),
+      dispatched: emergency.dispatched || 0,
     })
   }
 
@@ -388,6 +469,21 @@ export default function Dashboard() {
     // Update local progress tracking
     setTotalDispatched((prev) => prev + quantity)
     setTotalDistance((prev) => prev + distance)
+
+    // Update the dispatched count for the emergency
+    setEmergencies((prevEmergencies) => {
+      return prevEmergencies.map((emergency) => {
+        if (emergency.city === selectedEmergency?.city && emergency.county === selectedEmergency?.county) {
+          // Update the dispatched count
+          const dispatched = (emergency.dispatched || 0) + quantity
+          return {
+            ...emergency,
+            dispatched,
+          }
+        }
+        return emergency
+      })
+    })
 
     // Save updated state to localStorage
     const state = JSON.parse(localStorage.getItem("simulationState") || "{}")
@@ -437,6 +533,9 @@ export default function Dashboard() {
     if (status) {
       saveSimulationState(status.seed || "default", status.targetDispatches, status.maxActiveCalls, true)
     }
+
+    // Disable auto-fetch when auto-dispatch is running
+    setAutoFetchEnabled(false)
 
     logger.info("Auto dispatch started")
   }, [fetchControlStatus, saveSimulationState, startRefreshInterval, startTime, startTimer])
@@ -531,7 +630,7 @@ export default function Dashboard() {
     const initialFetch = async () => {
       try {
         const [locationsData] = await Promise.all([fetchLocations()])
-        setLocations(locationsData as unknown as Location[])
+        setLocations(locationsData as any)
         setIsLoading(false)
       } catch {
         // Don't set error on initial load
@@ -549,8 +648,11 @@ export default function Dashboard() {
       if (timerRef.current) {
         clearInterval(timerRef.current)
       }
+      if (autoFetchInterval) {
+        clearInterval(autoFetchInterval)
+      }
     }
-  }, [clearSimulationState, handleReset, refreshInterval])
+  }, [clearSimulationState, handleReset, refreshInterval, autoFetchInterval])
 
   // Create a local status object that includes our tracked metrics
   const localStatus = status
@@ -598,6 +700,31 @@ export default function Dashboard() {
                 isRunning={isSimulationRunning && !isAutoDispatch}
                 isStopping={isStoppingSimulation}
               />
+
+              {isSimulationRunning && !isAutoDispatch && (
+                <Card className={`${autoFetchEnabled ? "bg-blue-50 border-blue-200" : "bg-gray-50"} mb-4`}>
+                  <CardContent className="p-3 flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <Button
+                        variant={autoFetchEnabled ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setAutoFetchEnabled(!autoFetchEnabled)}
+                        className="h-8"
+                      >
+                        {autoFetchEnabled ? "Disable" : "Enable"} Auto-fetch
+                      </Button>
+                      <span className={`text-sm ${autoFetchEnabled ? "text-blue-700 font-medium" : "text-gray-600"}`}>
+                        Keep queue at max active calls
+                      </span>
+                    </div>
+                    {autoFetchEnabled && (
+                      <div className="text-xs text-blue-600">
+                        Auto-fetching emergencies when count &lt; {status?.maxActiveCalls || "max"}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
 
               {isAutoDispatch && isSimulationRunning && (
                 <Card className="bg-yellow-50 border-yellow-200">

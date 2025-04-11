@@ -22,8 +22,8 @@ export function StatusPanel({ status, isLoading, error }: StatusPanelProps) {
     )
   }
 
-  // Modify the error condition to only show when there's an error AND we're not in the initial state
-  if (error && status !== null) {
+  // Only show error if there's an error AND status is not null AND status is "Running"
+  if (error && status !== null && status.status === "Running") {
     return (
       <Card className="m-4 border-red-200 bg-red-50">
         <CardContent className="p-4 flex items-center text-red-600">

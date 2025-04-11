@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Loader2, Play, StopCircle, SkipForward } from "lucide-react"
-import { resetControl, stopControl, fetchNextEmergency } from "@/services/api"
+import { resetControl, fetchNextEmergency } from "@/services/api"
 import { toast } from "sonner"
 
 interface ControlPanelProps {
@@ -14,14 +14,14 @@ interface ControlPanelProps {
   onStop: () => void
   onFetchNext: () => void
   isRunning: boolean
+  isStopping?: boolean
 }
 
-export function ControlPanel({ onReset, onStop, onFetchNext, isRunning }: ControlPanelProps) {
+export function ControlPanel({ onReset, onStop, onFetchNext, isRunning, isStopping = false }: ControlPanelProps) {
   const [seed, setSeed] = useState("default")
   const [targetDispatches, setTargetDispatches] = useState(100)
   const [maxActiveCalls, setMaxActiveCalls] = useState(15)
   const [isLoading, setIsLoading] = useState(false)
-  const [isStopping, setIsStopping] = useState(false)
   const [isFetching, setIsFetching] = useState(false)
 
   const handleReset = async () => {
@@ -43,21 +43,7 @@ export function ControlPanel({ onReset, onStop, onFetchNext, isRunning }: Contro
   }
 
   const handleStop = async () => {
-    try {
-      setIsStopping(true)
-      await stopControl()
-      toast.success("Simulation Stopped", {
-        description: "The simulation has been stopped successfully.",
-      })
-      onStop()
-    } catch (error) {
-      console.error(error)
-      toast.error("Failed to Stop", {
-        description: "Failed to stop simulation. Please try again.",
-      })
-    } finally {
-      setIsStopping(false)
-    }
+    onStop()
   }
 
   const handleFetchNext = async () => {

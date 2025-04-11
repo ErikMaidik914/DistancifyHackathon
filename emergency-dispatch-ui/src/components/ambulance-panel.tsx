@@ -1,16 +1,17 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import type { AmbulanceLocation, EmergencyCall } from "@/types"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
-import { Ambulance, ArrowRight, Loader2 } from "lucide-react"
+import { Ambulance, ArrowRight, Loader2, CheckCircle2 } from "lucide-react"
 import { calculateDistance } from "@/utils/distance"
 import { dispatchAmbulance } from "@/services/api"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
+import { Badge } from "@/components/ui/badge"
 
 interface AmbulancePanelProps {
   ambulances: AmbulanceLocation[]
@@ -30,6 +31,62 @@ export function AmbulancePanel({
   const [searchTerm, setSearchTerm] = useState("")
   const [dispatchQuantity, setDispatchQuantity] = useState(1)
   const [isDispatching, setIsDispatching] = useState(false)
+  const [suggestedAmbulance, setSuggestedAmbulance] = useState<AmbulanceLocation | null>(null)
+
+  // Calculate the remaining ambulances needed for the selected emergency
+  const getRemainingNeeded = () => {
+    if (!selectedEmergency) return 0
+
+    const totalNeeded = selectedEmergency.requests.reduce((sum, req) => sum + req.Quantity, 0)
+    const dispatched = selectedEmergency.dispatched || 0
+    return Math.max(0, totalNeeded - dispatched)
+  }
+
+  // Auto-suggest the best ambulance when an emergency is selected
+  useEffect(() => {
+    if (selectedEmergency && ambulances.length > 0) {
+      // Find ambulances with available units
+      const availableAmbulances = ambulances.filter((amb) => amb.quantity > 0)
+
+      if (availableAmbulances.length > 0) {
+        // Sort by distance to the emergency
+        const sorted = [...availableAmbulances].sort((a, b) => {
+          const distA = calculateDistance(
+            a.latitude,
+            a.longitude,
+            selectedEmergency.latitude,
+            selectedEmergency.longitude,
+          )
+          const distB = calculateDistance(
+            b.latitude,
+            b.longitude,
+            selectedEmergency.latitude,
+            selectedEmergency.longitude,
+          )
+          return distA - distB
+        })
+
+        // Suggest the closest ambulance
+        setSuggestedAmbulance(sorted[0])
+
+        // Auto-select if no ambulance is currently selected
+        if (!selectedAmbulance) {
+          onSelect(sorted[0])
+        }
+
+        // Set default dispatch quantity based on remaining need
+        const remaining = getRemainingNeeded()
+        if (remaining > 0) {
+          const suggested = sorted[0]
+          setDispatchQuantity(Math.min(remaining, suggested.quantity))
+        }
+      } else {
+        setSuggestedAmbulance(null)
+      }
+    } else {
+      setSuggestedAmbulance(null)
+    }
+  }, [selectedEmergency, ambulances, selectedAmbulance, onSelect])
 
   const filteredAmbulances = ambulances
     .filter(
@@ -70,8 +127,8 @@ export function AmbulancePanel({
         selectedEmergency.longitude,
       )
 
-      // Updated dispatch request format
-      await dispatchAmbulance({
+      // Make sure the dispatch request format matches what the API expects
+      const response = await dispatchAmbulance({
         sourceCounty: selectedAmbulance.county,
         sourceCity: selectedAmbulance.city,
         targetCounty: selectedEmergency.county,
@@ -79,12 +136,23 @@ export function AmbulancePanel({
         quantity: dispatchQuantity,
       })
 
-      toast.success("Ambulance Dispatched", {
-        description: `Successfully dispatched ${dispatchQuantity} ambulance(s) from ${selectedAmbulance.city} to ${selectedEmergency.city}`,
-      })
+      // Check if the response indicates success
+      const parsedResponse = typeof response === "string" ? JSON.parse(response) : response;
+      if (parsedResponse && !parsedResponse.error) {
+        toast.success("Ambulance Dispatched", {
+          description: `Successfully dispatched ${dispatchQuantity} ambulance(s) from ${selectedAmbulance.city} to ${selectedEmergency.city}`,
+        })
 
-      // Pass the distance to the parent component
-      onDispatchSuccess(selectedAmbulance.city, selectedEmergency.city, dispatchQuantity, distance * dispatchQuantity)
+        // Pass the distance to the parent component
+        onDispatchSuccess(selectedAmbulance.city, selectedEmergency.city, dispatchQuantity, distance * dispatchQuantity)
+      } else {
+        // Handle API error response
+        const errorMessage = parsedResponse?.error || "Unknown error occurred during dispatch"
+        toast.error("Dispatch Failed", {
+          description: errorMessage,
+        })
+        console.error("Dispatch API error:", errorMessage)
+      }
     } catch (error) {
       console.error("Dispatch error:", error)
       toast.error("Dispatch Failed", {
@@ -99,6 +167,11 @@ export function AmbulancePanel({
     if (!selectedAmbulance || !selectedEmergency) return false
     if (dispatchQuantity <= 0) return false
     if (dispatchQuantity > selectedAmbulance.quantity) return false
+
+    // Check if there are still ambulances needed for this emergency
+    const remaining = getRemainingNeeded()
+    if (remaining <= 0) return false
+
     return true
   }
 
@@ -112,6 +185,41 @@ export function AmbulancePanel({
           selectedEmergency.longitude,
         )
       : 0
+
+  // Get ambulance rating based on distance and availability
+  const getAmbulanceRating = (ambulance: AmbulanceLocation) => {
+    if (!selectedEmergency) return null
+
+    const distance = calculateDistance(
+      ambulance.latitude,
+      ambulance.longitude,
+      selectedEmergency.latitude,
+      selectedEmergency.longitude,
+    )
+
+    // Simple rating algorithm: closer is better, more available units is better
+    if (distance < 0.1) return "Excellent"
+    if (distance < 0.3) return "Good"
+    if (distance < 0.5) return "Fair"
+    return "Poor"
+  }
+
+  // Get color for rating
+  const getRatingColor = (rating: string | null) => {
+    if (!rating) return ""
+    switch (rating) {
+      case "Excellent":
+        return "bg-green-100 text-green-800 border-green-300"
+      case "Good":
+        return "bg-blue-100 text-blue-800 border-blue-300"
+      case "Fair":
+        return "bg-yellow-100 text-yellow-800 border-yellow-300"
+      case "Poor":
+        return "bg-red-100 text-red-800 border-red-300"
+      default:
+        return ""
+    }
+  }
 
   return (
     <Card>
@@ -131,6 +239,23 @@ export function AmbulancePanel({
           />
         </div>
 
+        {selectedEmergency && (
+          <div className="bg-blue-50 p-2 rounded-md border border-blue-100">
+            <p className="text-sm text-blue-700 font-medium">
+              Emergency: {selectedEmergency.city}, {selectedEmergency.county}
+            </p>
+            <p className="text-xs text-blue-600">
+              Ambulances needed: {getRemainingNeeded()} of{" "}
+              {selectedEmergency.requests.reduce((sum, req) => sum + req.Quantity, 0)}
+            </p>
+            {suggestedAmbulance && (
+              <p className="text-xs text-blue-600 mt-1">
+                Suggested: {suggestedAmbulance.city} ({suggestedAmbulance.quantity} available)
+              </p>
+            )}
+          </div>
+        )}
+
         <ScrollArea className="h-[200px]">
           {filteredAmbulances.length === 0 ? (
             <div className="p-4 text-center text-gray-500">No ambulances available</div>
@@ -142,6 +267,11 @@ export function AmbulancePanel({
                   ambulance.city === selectedAmbulance.city &&
                   ambulance.county === selectedAmbulance.county
 
+                const isSuggested =
+                  suggestedAmbulance &&
+                  ambulance.city === suggestedAmbulance.city &&
+                  ambulance.county === suggestedAmbulance.county
+
                 let distance = 0
                 if (selectedEmergency) {
                   distance = calculateDistance(
@@ -152,21 +282,41 @@ export function AmbulancePanel({
                   )
                 }
 
+                const rating = getAmbulanceRating(ambulance)
+
                 return (
                   <Button
                     key={`${ambulance.city}-${ambulance.county}-${index}`}
                     variant={isSelected ? "default" : "outline"}
-                    className="w-full justify-start h-auto py-2 text-left"
+                    className={`w-full justify-start h-auto py-2 text-left ${isSuggested && !isSelected ? "border-blue-300 bg-blue-50" : ""}`}
                     onClick={() => onSelect(ambulance)}
+                    disabled={ambulance.quantity <= 0}
                   >
-                    <div className="flex flex-col">
-                      <div className="font-medium">
-                        {ambulance.city}, {ambulance.county}
+                    <div className="flex flex-col w-full">
+                      <div className="font-medium flex justify-between">
+                        <span>
+                          {ambulance.city}, {ambulance.county}
+                          {isSuggested && !isSelected && (
+                            <span className="ml-2 text-xs text-blue-600">(Suggested)</span>
+                          )}
+                        </span>
+                        {rating && selectedEmergency && (
+                          <Badge variant="outline" className={`text-xs ${getRatingColor(rating)}`}>
+                            {rating}
+                          </Badge>
+                        )}
                       </div>
-                      <div className="text-sm text-muted-foreground">
-                        Available: <span className="font-semibold text-blue-500">{ambulance.quantity}</span>
+                      <div className="text-sm text-muted-foreground flex justify-between">
+                        <span>
+                          Available:{" "}
+                          <span
+                            className={`font-semibold ${ambulance.quantity > 0 ? "text-blue-500" : "text-gray-400"}`}
+                          >
+                            {ambulance.quantity}
+                          </span>
+                        </span>
                         {selectedEmergency && (
-                          <span className="ml-2">
+                          <span>
                             Distance: <span className="font-semibold">{distance.toFixed(2)}</span>
                           </span>
                         )}
@@ -188,11 +338,19 @@ export function AmbulancePanel({
             </div>
 
             <div className="text-sm mb-2">
-              Distance: <span className="font-semibold">{selectedDistance.toFixed(2)}</span>
-              {dispatchQuantity > 1 && (
-                <span className="ml-2">
-                  Total: <span className="font-semibold">{(selectedDistance * dispatchQuantity).toFixed(2)}</span>
+              <div className="flex justify-between">
+                <span>
+                  Distance: <span className="font-semibold">{selectedDistance.toFixed(2)}</span>
                 </span>
+                <span>
+                  Needed: <span className="font-semibold text-red-500">{getRemainingNeeded()}</span>
+                </span>
+              </div>
+              {dispatchQuantity > 1 && (
+                <div className="mt-1">
+                  Total distance:{" "}
+                  <span className="font-semibold">{(selectedDistance * dispatchQuantity).toFixed(2)}</span>
+                </div>
               )}
             </div>
 
@@ -203,7 +361,7 @@ export function AmbulancePanel({
                   id="quantity"
                   type="number"
                   min={1}
-                  max={selectedAmbulance.quantity}
+                  max={Math.min(selectedAmbulance.quantity, getRemainingNeeded())}
                   value={dispatchQuantity}
                   onChange={(e) => setDispatchQuantity(Number.parseInt(e.target.value) || 0)}
                   className="w-full"
@@ -215,6 +373,11 @@ export function AmbulancePanel({
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     Dispatching...
+                  </>
+                ) : getRemainingNeeded() <= 0 ? (
+                  <>
+                    <CheckCircle2 className="mr-2 h-4 w-4" />
+                    Emergency Fulfilled
                   </>
                 ) : (
                   "Dispatch Ambulance"
