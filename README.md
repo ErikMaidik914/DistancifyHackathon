@@ -1,11 +1,11 @@
 # DistancifyHackathon
 
 THE FOLLOWING DOCUMENTATION WILL CONTAIN:
-- STAGE 1 -> INFORMATION SPECIFICALLY TAILORED TO MEET THE GIVEN REQUIREMENTS FROM "https://distancify.com/hackathon-2025-submit"
-- STAGE 2 -> GENERAL APP INFORMATION
+- DOC 1 -> INFORMATION SPECIFICALLY TAILORED TO MEET THE GIVEN REQUIREMENTS FROM "https://distancify.com/hackathon-2025-submit"
+- DOC 2 -> GENERAL APP INFORMATION
 
 
-STAGE 1:
+DOC 1:
 UI MODULE Documentation
 The UI is a modular, scalable system based on React (with Next.js), Tailwind CSS, and Radix UI primitives. It separates concerns through components and services to enable clean integration and flexible updates.
 Hybrid Automation: Most UI actions (dispatching, refreshing, fetching) are powered by API calls but allow manual control and overrides.
@@ -16,7 +16,7 @@ a)The user can choose to automate the whole process and run it
 B)Or the user can choose to just fetch emergency calls automatically and manually assing them.
 
 
-STAGE 2:
+DOC 2:
 Emergency Dispatch Simulation
 This system simulates emergency response dispatching.
 It is designed for realistic testing of multi-resource dispatch strategies across emergency types (e.g., Medical, Fire, Police).
