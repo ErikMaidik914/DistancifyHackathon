@@ -1,6 +1,15 @@
 # DistancifyHackathon
 
+THE FOLLOWING DOCUMENTATION WILL CONTAIN:
+- STAGE 1 -> INFORMATION SPECIFICALLY TAILORED TO MEET THE GIVEN REQUIREMENTS FROM "https://distancify.com/hackathon-2025-submit"
+- STAGE 2 -> GENERAL APP INFORMATION
 
+  STAGE 1:
+  
+
+
+
+STAGE 2:
 Emergency Dispatch Simulation
 This system simulates emergency response dispatching.
 It is designed for realistic testing of multi-resource dispatch strategies across emergency types (e.g., Medical, Fire, Police).
