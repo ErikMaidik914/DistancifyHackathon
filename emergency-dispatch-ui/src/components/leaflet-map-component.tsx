@@ -24,14 +24,36 @@ const FixLeafletIcons = () => {
 }
 
 // Custom icons
-const createResourceIcon = (type: EmergencyType) => {
+// Update the resource marker creation to reflect availability
+const createResourceIcon = (type: EmergencyType, quantity: number, isSelected = false) => {
   const color = EMERGENCY_TYPE_COLORS[type]
+  const size = isSelected ? 30 : 24
+  const borderWidth = isSelected ? 3 : 2
+  const borderColor = isSelected ? "white" : "#f8f8f8"
+  const isAvailable = quantity > 0
+
   return new L.DivIcon({
     className: "custom-div-icon",
-    html: `<div style="background-color: ${color}; width: 24px; height: 24px; border-radius: 50%; display: flex; justify-content: center; align-items: center; color: white; font-weight: bold; border: 2px solid white;">${type.charAt(0)}</div>`,
-    iconSize: [24, 24],
-    iconAnchor: [12, 12],
-    popupAnchor: [0, -12],
+    html: `
+      <div style="
+        background-color: ${isAvailable ? color : "#9ca3af"}; 
+        width: ${size}px; 
+        height: ${size}px; 
+        border-radius: 50%; 
+        display: flex; 
+        justify-content: center; 
+        align-items: center; 
+        color: white; 
+        font-weight: bold; 
+        border: ${borderWidth}px solid ${borderColor};
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      ">
+        ${quantity}
+      </div>
+    `,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+    popupAnchor: [0, -size / 2],
   })
 }
 
@@ -144,7 +166,7 @@ export default function LeafletMapComponent({
             <Marker
               key={`res-${resource.city}-${resource.county}-${resource.type}-${index}`}
               position={[resource.latitude, resource.longitude]}
-              icon={createResourceIcon(resource.type)}
+              icon={createResourceIcon(resource.type, resource.quantity, isSelected)}
               opacity={isSelected ? 1 : 0.8}
             >
               <Popup>

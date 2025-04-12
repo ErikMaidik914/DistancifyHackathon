@@ -1,7 +1,7 @@
 "use client"
 import dynamic from "next/dynamic"
 import type { EmergencyResource, EmergencyCall, Location } from "@/types"
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { logger } from "./logger"
 
 // Create a placeholder component to show while the map is loading
@@ -32,19 +32,8 @@ const MapWithNoSSR = dynamic(() => import("./map"), {
 })
 
 export function LeafletMap(props: LeafletMapProps) {
-  const [isMapLoaded, setIsMapLoaded] = useState(false)
+  const [, setIsMapLoaded] = useState(false)
   const [mapError, setMapError] = useState<string | null>(null)
-
-  // Monitor map loading status
-  useEffect(() => {
-    const timeout = setTimeout(() => {
-      if (!isMapLoaded) {
-        logger.warn("Map is taking longer than expected to load")
-      }
-    }, 5000)
-
-    return () => clearTimeout(timeout)
-  }, [isMapLoaded])
 
   // Handle map load event
   const handleMapLoad = () => {

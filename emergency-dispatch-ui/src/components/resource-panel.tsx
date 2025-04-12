@@ -1,5 +1,7 @@
 "use client"
 
+import type React from "react"
+
 import { useMemo } from "react"
 
 import { useState, useEffect, useCallback } from "react"
@@ -42,6 +44,7 @@ import {
   DropdownMenuSubContent,
 } from "@/components/ui/dropdown-menu"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { fetchAvailableResources } from "@/services/api"
 
 interface ResourcePanelProps {
   resources: EmergencyResource[]
@@ -49,6 +52,10 @@ interface ResourcePanelProps {
   selectedResource: EmergencyResource | null
   selectedEmergency: EmergencyCall | null
   onDispatchSuccess: (from: string, to: string, quantity: number, distance: number, type: EmergencyType) => void
+  setResources: React.Dispatch<React.SetStateAction<EmergencyResource[]>>
+  setSelectedResource: React.Dispatch<React.SetStateAction<EmergencyResource | null>>
+  setSuggestedResource: React.Dispatch<React.SetStateAction<EmergencyResource | null>>
+  setSelectedEmergency: React.Dispatch<React.SetStateAction<EmergencyCall | null>>
 }
 
 type SortOption = "distance" | "quantity" | "name" | "county"
@@ -60,11 +67,15 @@ export function ResourcePanel({
   selectedResource,
   selectedEmergency,
   onDispatchSuccess,
+  setResources,
+  setSelectedResource,
+  setSuggestedResource,
+  setSelectedEmergency,
 }: ResourcePanelProps) {
   const [searchTerm, setSearchTerm] = useState("")
   const [dispatchQuantity, setDispatchQuantity] = useState(1)
   const [isDispatching, setIsDispatching] = useState(false)
-  const [suggestedResource, setSuggestedResource] = useState<EmergencyResource | null>(null)
+  const [localSuggestedResource, setLocalSuggestedResource] = useState<EmergencyResource | null>(null)
   const [dispatchError, setDispatchError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<EmergencyType>("Medical")
   const [typeFilters, setTypeFilters] = useState<Record<EmergencyType, boolean>>({
@@ -129,7 +140,7 @@ export function ResourcePanel({
           })
 
           // Suggest the closest resource
-          setSuggestedResource(sorted[0])
+          setLocalSuggestedResource(sorted[0])
 
           // Auto-select if no resource is currently selected
           if (!selectedResource) {
@@ -146,16 +157,27 @@ export function ResourcePanel({
           // Set the active tab to the priority type
           setActiveTab(priorityType)
         } else {
-          setSuggestedResource(null)
+          setLocalSuggestedResource(null)
         }
       }
     } else {
-      setSuggestedResource(null)
+      setLocalSuggestedResource(null)
     }
 
     // Clear any previous dispatch errors when selection changes
     setDispatchError(null)
   }, [selectedEmergency, resources, selectedResource, onSelect, activeTab, getRemainingNeededByType])
+
+  // Add this useEffect after the existing useEffect for auto-suggest
+  useEffect(() => {
+    // When selectedEmergency changes, update the dispatch quantity based on remaining need
+    if (selectedEmergency && selectedResource) {
+      const remaining = getRemainingNeededByType(selectedResource.type)
+      if (remaining > 0) {
+        setDispatchQuantity(Math.min(remaining, selectedResource.quantity))
+      }
+    }
+  }, [selectedEmergency, selectedResource, getRemainingNeededByType])
 
   // Filter and sort resources
   const getFilteredResources = useCallback(() => {
@@ -213,6 +235,8 @@ export function ResourcePanel({
 
   const filteredResources = getFilteredResources()
 
+  // Update the handleDispatch function inside the ResourcePanel component to add better error handling:
+
   const handleDispatch = async () => {
     if (!selectedResource || !selectedEmergency) {
       setDispatchError("No resource or emergency selected")
@@ -234,7 +258,7 @@ export function ResourcePanel({
       )
 
       // Log the dispatch attempt with detailed information
-      logger.info(`Attempting to dispatch ${selectedResource.type} resource`, {
+      logger.info("Attempting to dispatch resource", {
         type: selectedResource.type,
         sourceCounty: selectedResource.county,
         sourceCity: selectedResource.city,
@@ -243,6 +267,38 @@ export function ResourcePanel({
         quantity: dispatchQuantity,
         distance: distance,
       })
+
+      // First, re-validate that the resource is still available
+      // This helps prevent over-dispatching due to race conditions with the API
+      try {
+        const availableResources = await fetchAvailableResources(selectedResource.type)
+        const currentResource = availableResources.find(
+          (res) => res.city === selectedResource.city && res.county === selectedResource.county,
+        )
+
+        // If resource no longer exists or has less quantity than we're trying to dispatch
+        if (!currentResource || currentResource.quantity < dispatchQuantity) {
+          const errorMessage = !currentResource
+            ? "This resource is no longer available"
+            : `Only ${currentResource.quantity} units available now (trying to dispatch ${dispatchQuantity})`
+
+          logger.warn("Resource availability changed before dispatch", {
+            originalQuantity: selectedResource.quantity,
+            currentQuantity: currentResource?.quantity || 0,
+            requestedQuantity: dispatchQuantity,
+          })
+
+          setDispatchError(errorMessage)
+          throw new Error(errorMessage)
+        }
+      } catch (error) {
+        if (error.message.includes("units available") || error.message.includes("no longer available")) {
+          // This is our validation error, so let it bubble up
+          throw error
+        }
+        // For other errors with validation check, we'll log but continue with dispatch
+        logger.warn("Failed to validate current resource availability", { error })
+      }
 
       // Make the API call with the correctly formatted request
       const response = await dispatchResource(selectedResource.type, {
@@ -254,7 +310,7 @@ export function ResourcePanel({
       })
 
       // Log the successful dispatch
-      logger.info(`${selectedResource.type} resource dispatched successfully`, {
+      logger.info("Resource dispatched successfully", {
         response,
         type: selectedResource.type,
         from: `${selectedResource.city}, ${selectedResource.county}`,
@@ -263,7 +319,7 @@ export function ResourcePanel({
       })
 
       // Show success toast
-      toast.success(`${selectedResource.type} Dispatched`, {
+      toast.success("Resource Dispatched", {
         description: `Successfully dispatched ${dispatchQuantity} ${selectedResource.type.toLowerCase()} unit(s) from ${selectedResource.city} to ${selectedEmergency.city}`,
       })
 
@@ -283,7 +339,10 @@ export function ResourcePanel({
 
       if (error instanceof Error) {
         // Extract more specific error details if available
-        if (error.message.includes("400")) {
+        if (error.message.includes("no longer available") || error.message.includes("units available")) {
+          // Use our custom validation error message directly
+          errorMessage = error.message
+        } else if (error.message.includes("400")) {
           errorMessage = "Invalid dispatch request format. Please check the data and try again."
           logger.error("Invalid dispatch request format", { error: error.message })
         } else if (error.message.includes("404")) {
@@ -292,8 +351,8 @@ export function ResourcePanel({
         } else if (error.message.includes("500")) {
           errorMessage = "Server error occurred. Please try again later."
           logger.error("Server error during dispatch", { error: error.message })
-        } else if (error.message.includes("fetch failed")) {
-          errorMessage = "Network error. Please check your connection and try again."
+        } else if (error.message.includes("fetch failed") || error.message.includes("timeout")) {
+          errorMessage = "Network error or timeout. Please check your connection and try again."
           logger.error("Network error during dispatch", { error: error.message })
         }
 
@@ -577,7 +636,7 @@ export function ResourcePanel({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as EmergencyType)}>
+        <Tabs value={activeTab} onValueChangee={(value) => setActiveTab(value as EmergencyType)}>
           <TabsList className="w-full grid grid-cols-5">
             {typeFilters.Medical && (
               <TabsTrigger value="Medical" disabled={!typeFilters.Medical}>
@@ -650,26 +709,6 @@ export function ResourcePanel({
           </div>
         )}
 
-        {selectedEmergency && (
-          <div className="bg-blue-50 p-2 rounded-md border border-blue-100">
-            <p className="text-sm text-blue-700 font-medium">
-              Emergency: {selectedEmergency.city}, {selectedEmergency.county}
-            </p>
-            <div className="text-xs text-blue-600">
-              {selectedEmergency.requests.map((req) => (
-                <p key={req.Type}>
-                  {req.Type} needed: {getRemainingNeededByType(req.Type)} of {req.Quantity}
-                </p>
-              ))}
-            </div>
-            {suggestedResource && (
-              <p className="text-xs text-blue-600 mt-1">
-                Suggested: {suggestedResource.city} ({suggestedResource.quantity} {suggestedResource.type} available)
-              </p>
-            )}
-          </div>
-        )}
-
         <ScrollArea className="h-[200px]">
           {filteredResources.length === 0 ? (
             <div className="p-4 text-center text-gray-500">No {activeTab.toLowerCase()} resources available</div>
@@ -683,10 +722,10 @@ export function ResourcePanel({
                   resource.type === selectedResource.type
 
                 const isSuggested =
-                  suggestedResource &&
-                  resource.city === suggestedResource.city &&
-                  resource.county === suggestedResource.county &&
-                  resource.type === suggestedResource.type
+                  localSuggestedResource &&
+                  resource.city === localSuggestedResource.city &&
+                  resource.county === localSuggestedResource.county &&
+                  resource.type === localSuggestedResource.type
 
                 let distance = 0
                 if (selectedEmergency) {

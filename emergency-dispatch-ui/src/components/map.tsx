@@ -10,8 +10,9 @@ import { calculateDistance } from "@/utils/distance"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Loader2, Info } from "lucide-react"
+import { Loader2, Info, AlertCircle, CheckCircle } from "lucide-react"
 import { logger } from "./logger"
+import { Progress } from "@/components/ui/progress"
 
 // Fix Leaflet icon issues
 const FixLeafletIcons = () => {
@@ -93,12 +94,13 @@ const createResourceIcon = (type: EmergencyType, quantity: number, isSelected = 
   const size = isSelected ? 30 : 24
   const borderWidth = isSelected ? 3 : 2
   const borderColor = isSelected ? "white" : "#f8f8f8"
+  const isAvailable = quantity > 0
 
   return new L.DivIcon({
     className: "custom-div-icon",
     html: `
       <div style="
-        background-color: ${color}; 
+        background-color: ${isAvailable ? color : "#9ca3af"}; 
         width: ${size}px; 
         height: ${size}px; 
         border-radius: 50%; 
@@ -120,15 +122,16 @@ const createResourceIcon = (type: EmergencyType, quantity: number, isSelected = 
 }
 
 // Create emergency icon
-const createEmergencyIcon = (totalNeeded: number, isSelected = false) => {
+const createEmergencyIcon = (totalNeeded: number, isSelected = false, isFulfilled = false) => {
   const size = isSelected ? 30 : 24
   const borderWidth = isSelected ? 3 : 2
+  const bgColor = isFulfilled ? "#10b981" : "#ef4444" // Green if fulfilled, red otherwise
 
   return new L.DivIcon({
     className: "custom-div-icon",
     html: `
       <div style="
-        background-color: #ef4444; 
+        background-color: ${bgColor}; 
         width: ${size}px; 
         height: ${size}px; 
         border-radius: 50%; 
@@ -140,7 +143,7 @@ const createEmergencyIcon = (totalNeeded: number, isSelected = false) => {
         border: ${borderWidth}px solid white;
         box-shadow: 0 2px 4px rgba(0,0,0,0.3);
       ">
-        ${totalNeeded}
+        ${isFulfilled ? "✓" : totalNeeded}
       </div>
     `,
     iconSize: [size, size],
@@ -181,6 +184,7 @@ export default function Map({
   })
   const [mapInstance, setMapInstance] = useState<L.Map | null>(null)
   const [isMapReady, setIsMapReady] = useState(false)
+  const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
 
   // Create a MapController component to handle map instance operations
   const MapController = () => {
@@ -210,6 +214,11 @@ export default function Map({
     return null
   }
 
+  // Update lastUpdated when resources or emergencies change
+  useEffect(() => {
+    setLastUpdated(new Date())
+  }, [resources, emergencies])
+
   const handleLocationClick = useCallback(
     async (lat: number, lng: number) => {
       setClickedLocation({ lat, lng })
@@ -217,7 +226,7 @@ export default function Map({
 
       try {
         // Find the nearest location to the clicked point
-        let nearestLocation: Location | null = null as Location | null
+        let nearestLocation: Location | null = null
         let minDistance = Number.MAX_VALUE
 
         locations.forEach((location) => {
@@ -269,16 +278,31 @@ export default function Map({
   // Filter resources by visible types
   const filteredResources = resources.filter((resource) => visibleTypes[resource.type])
 
-  // Get emergency requests by type
-  const getEmergencyRequests = useCallback((emergency: EmergencyCall) => {
-    return emergency.requests.map((req) => (
-      <div key={req.Type} className="flex items-center">
-        <div className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: EMERGENCY_TYPE_COLORS[req.Type] }}></div>
-        <span>
-          {req.Type}: {req.Quantity}
-        </span>
-      </div>
-    ))
+  // Get emergency requests by type with status
+  const getEmergencyRequestsWithStatus = useCallback((emergency: EmergencyCall) => {
+    return emergency.requests.map((req) => {
+      const dispatched = (emergency.dispatched as Record<EmergencyType, number>)?.[req.Type] || 0
+      const remaining = Math.max(0, req.Quantity - dispatched)
+      const isFulfilled = remaining === 0
+
+      return (
+        <div key={req.Type} className="flex items-center justify-between mb-1">
+          <div className="flex items-center">
+            <div
+              className="w-2 h-2 rounded-full mr-1"
+              style={{ backgroundColor: EMERGENCY_TYPE_COLORS[req.Type] }}
+            ></div>
+            <span>{req.Type}:</span>
+          </div>
+          <div className="flex items-center">
+            <span className={isFulfilled ? "text-green-600 font-medium" : "font-medium"}>
+              {dispatched}/{req.Quantity}
+            </span>
+            {isFulfilled && <CheckCircle className="h-3 w-3 text-green-600 ml-1" />}
+          </div>
+        </div>
+      )
+    })
   }, [])
 
   // Calculate total needed resources for an emergency
@@ -300,6 +324,25 @@ export default function Map({
       return Math.max(0, total - dispatched)
     },
     [calculateTotalNeeded, calculateDispatched],
+  )
+
+  // Calculate completion percentage for an emergency
+  const calculateCompletionPercentage = useCallback(
+    (emergency: EmergencyCall) => {
+      const total = calculateTotalNeeded(emergency)
+      if (total === 0) return 100
+      const dispatched = calculateDispatched(emergency)
+      return Math.min(100, Math.round((dispatched / total) * 100))
+    },
+    [calculateTotalNeeded, calculateDispatched],
+  )
+
+  // Check if an emergency is fulfilled
+  const isEmergencyFulfilled = useCallback(
+    (emergency: EmergencyCall) => {
+      return calculateRemaining(emergency) === 0
+    },
+    [calculateRemaining],
   )
 
   // Recenter map when selection changes
@@ -354,12 +397,24 @@ export default function Map({
           <div className="w-3 h-3 rounded-full bg-red-500 mr-2"></div>
           <span>Emergency</span>
         </div>
+        <div className="flex items-center mb-1">
+          <div className="w-3 h-3 rounded-full bg-green-500 mr-2"></div>
+          <span>Fulfilled Emergency</span>
+        </div>
         {(Object.keys(EMERGENCY_TYPE_COLORS) as EmergencyType[]).map((type) => (
           <div key={type} className="flex items-center mb-1">
             <div className="w-3 h-3 rounded-full mr-2" style={{ backgroundColor: EMERGENCY_TYPE_COLORS[type] }}></div>
             <span>{type} Resources</span>
           </div>
         ))}
+      </div>
+
+      {/* Last updated indicator */}
+      <div className="absolute bottom-2 right-2 z-10 bg-white p-2 rounded shadow-md text-xs">
+        <div className="flex items-center">
+          <div className="w-2 h-2 rounded-full bg-blue-500 mr-2"></div>
+          <span>Updated: {lastUpdated.toLocaleTimeString()}</span>
+        </div>
       </div>
 
       <MapContainer
@@ -391,23 +446,40 @@ export default function Map({
             <Marker
               key={`res-${resource.city}-${resource.county}-${resource.type}-${index}`}
               position={[resource.latitude, resource.longitude]}
-              icon={createResourceIcon(resource.type, resource.quantity, !!isSelected)}
+              icon={createResourceIcon(resource.type, resource.quantity, isSelected)}
               opacity={isSelected ? 1 : 0.8}
             >
               <Popup>
                 <div className="text-sm">
-                  <div className="font-bold mb-1">{resource.type} Resource</div>
+                  <div className="font-bold mb-1 flex items-center justify-between">
+                    <div className="flex items-center">
+                      <div
+                        className="w-3 h-3 rounded-full mr-1"
+                        style={{ backgroundColor: EMERGENCY_TYPE_COLORS[resource.type] }}
+                      ></div>
+                      <span>{resource.type} Resource</span>
+                    </div>
+                    <Badge
+                      variant="outline"
+                      className={`ml-2 text-xs ${resource.quantity > 0 ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}
+                    >
+                      {resource.quantity > 0 ? "Available" : "Unavailable"}
+                    </Badge>
+                  </div>
                   <div className="mb-1">
                     <strong>Location:</strong> {resource.city}, {resource.county}
                   </div>
                   <div className="mb-1">
-                    <strong>Available:</strong> {resource.quantity}
+                    <strong>Units:</strong>{" "}
+                    <span className={resource.quantity > 0 ? "text-green-600 font-medium" : "text-red-500 font-medium"}>
+                      {resource.quantity}
+                    </span>
                   </div>
                   {selectedEmergency && (
                     <div className="mt-2 pt-2 border-t border-gray-200">
                       <div className="text-xs text-gray-500 mb-1">Selected Emergency</div>
                       <div>
-                        Distance:{" "}
+                        <strong>Distance:</strong>{" "}
                         {calculateDistance(
                           resource.latitude,
                           resource.longitude,
@@ -415,6 +487,11 @@ export default function Map({
                           selectedEmergency.longitude,
                         ).toFixed(2)}
                       </div>
+                      {selectedEmergency.requests.some((req) => req.Type === resource.type) ? (
+                        <div className="text-xs text-green-600 mt-1">This resource type is needed at the emergency</div>
+                      ) : (
+                        <div className="text-xs text-yellow-600 mt-1">This resource type is not requested</div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -443,37 +520,66 @@ export default function Map({
 
           const totalNeeded = calculateTotalNeeded(emergency)
           const remaining = calculateRemaining(emergency)
-          const isFulfilled = remaining === 0
+          const fulfilled = isEmergencyFulfilled(emergency)
+          const completionPercentage = calculateCompletionPercentage(emergency)
 
           return (
             <Marker
               key={`emg-${emergency.city}-${emergency.county}-${index}`}
               position={[emergency.latitude, emergency.longitude]}
-              icon={createEmergencyIcon(remaining, !!isSelected)}
-              opacity={isSelected ? 1 : isFulfilled ? 0.6 : 0.8}
+              icon={createEmergencyIcon(remaining, isSelected, fulfilled)}
+              opacity={isSelected ? 1 : fulfilled ? 0.8 : 0.9}
             >
               <Popup>
                 <div className="text-sm">
-                  <div className="font-bold mb-1">
-                    Emergency {isFulfilled && <span className="text-green-600">(Fulfilled)</span>}
+                  <div className="font-bold mb-1 flex items-center justify-between">
+                    <span>Emergency</span>
+                    {fulfilled ? (
+                      <Badge variant="outline" className="bg-green-100 text-green-800">
+                        Fulfilled
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="bg-yellow-100 text-yellow-800">
+                        {remaining} needed
+                      </Badge>
+                    )}
                   </div>
                   <div className="mb-1">
                     <strong>Location:</strong> {emergency.city}, {emergency.county}
                   </div>
+
                   <div className="mb-2">
-                    <strong>Resources needed:</strong> {remaining}/{totalNeeded}
+                    <div className="flex justify-between text-xs mb-1">
+                      <span>Completion:</span>
+                      <span>{completionPercentage}%</span>
+                    </div>
+                    <Progress
+                      value={completionPercentage}
+                      className="h-1.5"
+                      indicatorClassName={fulfilled ? "bg-green-500" : "bg-blue-500"}
+                    />
                   </div>
 
                   <div className="text-xs mt-2 pt-2 border-t border-gray-200">
-                    <div className="font-medium mb-1">Requested resources:</div>
-                    {getEmergencyRequests(emergency)}
+                    <div className="font-medium mb-1">Resource Status:</div>
+                    {getEmergencyRequestsWithStatus(emergency)}
                   </div>
 
                   {selectedResource && (
                     <div className="mt-2 pt-2 border-t border-gray-200">
                       <div className="text-xs text-gray-500 mb-1">Selected Resource</div>
-                      <div>
-                        Distance:{" "}
+                      <div className="flex items-center justify-between">
+                        <span>{selectedResource.type}:</span>
+                        <span
+                          className={
+                            selectedResource.quantity > 0 ? "text-green-600 font-medium" : "text-red-500 font-medium"
+                          }
+                        >
+                          {selectedResource.quantity} units
+                        </span>
+                      </div>
+                      <div className="mt-1">
+                        <strong>Distance:</strong>{" "}
                         {calculateDistance(
                           selectedResource.latitude,
                           selectedResource.longitude,
@@ -490,8 +596,8 @@ export default function Map({
                   center={[emergency.latitude, emergency.longitude]}
                   radius={2000}
                   pathOptions={{
-                    color: "red",
-                    fillColor: "red",
+                    color: fulfilled ? "green" : "red",
+                    fillColor: fulfilled ? "green" : "red",
                     fillOpacity: 0.2,
                   }}
                 />
@@ -560,18 +666,47 @@ export default function Map({
                 <div className="text-xs font-medium mb-1">Nearby Resources:</div>
                 <div className="max-h-40 overflow-y-auto">
                   {nearbyResources.map((resource, index) => (
-                    <div key={index} className="text-xs p-1 mb-1 border-b border-gray-100 last:border-0">
-                      <div className="flex items-center">
-                        <div
-                          className="w-2 h-2 rounded-full mr-1"
-                          style={{ backgroundColor: EMERGENCY_TYPE_COLORS[resource.type] }}
-                        ></div>
-                        <span className="font-medium">{resource.type}</span>
+                    <div
+                      key={index}
+                      className="text-xs p-2 mb-1 border-b border-gray-100 last:border-0 hover:bg-gray-50 rounded"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center">
+                          <div
+                            className="w-3 h-3 rounded-full mr-1"
+                            style={{ backgroundColor: EMERGENCY_TYPE_COLORS[resource.type] }}
+                          ></div>
+                          <span className="font-medium">{resource.type}</span>
+                        </div>
+                        <Badge
+                          variant="outline"
+                          className={
+                            resource.quantity > 0
+                              ? "bg-green-100 text-green-800 text-[10px]"
+                              : "bg-red-100 text-red-800 text-[10px]"
+                          }
+                        >
+                          {resource.quantity > 0 ? `${resource.quantity} units` : "Unavailable"}
+                        </Badge>
                       </div>
-                      <div>
-                        {resource.city}, {resource.county}
+                      <div className="mt-1">
+                        <span className="text-gray-600">
+                          {resource.city}, {resource.county}
+                        </span>
                       </div>
-                      <div>Available: {resource.quantity}</div>
+                      {selectedEmergency && (
+                        <div className="mt-1 text-[10px] flex justify-between">
+                          <span>Distance:</span>
+                          <span className="font-medium">
+                            {calculateDistance(
+                              resource.latitude,
+                              resource.longitude,
+                              selectedEmergency.latitude,
+                              selectedEmergency.longitude,
+                            ).toFixed(2)}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -580,6 +715,95 @@ export default function Map({
               <div className="flex items-center justify-center py-4 text-gray-500 text-sm">
                 <Info className="h-4 w-4 mr-1" />
                 No resources found nearby
+              </div>
+            )}
+          </div>
+        </Card>
+      )}
+
+      {/* Resource details card - only show when a resource is selected */}
+      {selectedResource && (
+        <Card className="absolute top-4 right-4 w-72 shadow-lg z-20">
+          <div className="p-3">
+            <div className="flex items-center mb-2 justify-between">
+              <div className="flex items-center">
+                <div
+                  className="w-3 h-3 rounded-full mr-1"
+                  style={{ backgroundColor: EMERGENCY_TYPE_COLORS[selectedResource.type] }}
+                ></div>
+                <h3 className="font-medium text-sm">{selectedResource.type} Resource</h3>
+              </div>
+              <Badge
+                variant="outline"
+                className={`${selectedResource.quantity > 0 ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}
+              >
+                {selectedResource.quantity > 0 ? `${selectedResource.quantity} units` : "Unavailable"}
+              </Badge>
+            </div>
+
+            <div className="bg-gray-50 p-2 rounded mb-2">
+              <div className="text-sm font-medium">
+                {selectedResource.city}, {selectedResource.county}
+              </div>
+              <div className="text-xs text-gray-600">
+                Coordinates: {selectedResource.latitude.toFixed(4)}, {selectedResource.longitude.toFixed(4)}
+              </div>
+            </div>
+
+            {selectedEmergency && (
+              <div className="bg-blue-50 p-2 rounded border border-blue-100">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="text-xs font-medium text-blue-800">Selected Emergency</div>
+                  {isEmergencyFulfilled(selectedEmergency) ? (
+                    <Badge variant="outline" className="bg-green-100 text-green-800 text-[10px]">
+                      Fulfilled
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="bg-yellow-100 text-yellow-800 text-[10px]">
+                      {calculateRemaining(selectedEmergency)} needed
+                    </Badge>
+                  )}
+                </div>
+                <div className="text-xs">
+                  {selectedEmergency.city}, {selectedEmergency.county}
+                </div>
+                <div className="mt-1 text-xs">
+                  <strong>Distance:</strong>{" "}
+                  {calculateDistance(
+                    selectedResource.latitude,
+                    selectedResource.longitude,
+                    selectedEmergency.latitude,
+                    selectedEmergency.longitude,
+                  ).toFixed(2)}
+                </div>
+
+                {selectedEmergency.requests.some((req) => req.Type === selectedResource.type) ? (
+                  <div className="mt-2 text-xs">
+                    <div className="flex justify-between items-center">
+                      <span>Needed:</span>
+                      <span className="font-medium">
+                        {selectedEmergency.requests.find((req) => req.Type === selectedResource.type)?.Quantity || 0}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span>Dispatched:</span>
+                      <span className="font-medium">
+                        {(selectedEmergency.dispatched as Record<EmergencyType, number>)?.[selectedResource.type] || 0}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-2 text-xs text-yellow-600">
+                    <AlertCircle className="h-3 w-3 inline mr-1" />
+                    This resource type is not requested
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!selectedEmergency && (
+              <div className="text-xs text-gray-500 italic text-center mt-2">
+                Select an emergency to see dispatch options
               </div>
             )}
           </div>

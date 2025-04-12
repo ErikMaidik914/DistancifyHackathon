@@ -1,6 +1,7 @@
 "use client"
 
 import type React from "react"
+import { useEffect, useState } from "react"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { type EmergencyType, type ResourceAvailability, type EmergencyStats, EMERGENCY_TYPE_COLORS } from "@/types"
@@ -42,13 +43,30 @@ export function ResourceStats({ resourceStats, emergencyStats }: ResourceStatsPr
     }
   }
 
-  const resourceUtilization = [
+  const [resourceUtilization, setResourceUtilization] = useState(() => [
     getResourceUtilization("Medical"),
     getResourceUtilization("Police"),
     getResourceUtilization("Fire"),
     getResourceUtilization("Rescue"),
     getResourceUtilization("Utility"),
-  ]
+  ])
+
+  // Add a useEffect to recalculate stats when resources change
+  useEffect(() => {
+    // Calculate total resources
+
+    // Calculate resource utilization
+    const utilization = [
+      getResourceUtilization("Medical"),
+      getResourceUtilization("Police"),
+      getResourceUtilization("Fire"),
+      getResourceUtilization("Rescue"),
+      getResourceUtilization("Utility"),
+    ]
+
+    // Update state if needed
+    setResourceUtilization(utilization)
+  }, [resourceStats, emergencyStats])
 
   return (
     <div className="space-y-4">

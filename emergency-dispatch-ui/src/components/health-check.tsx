@@ -8,6 +8,7 @@ import { Loader2, RefreshCw, CheckCircle, AlertTriangle, XCircle } from "lucide-
 import { getSystemHealth } from "@/services/api"
 import type { SystemStatus, HealthStatus } from "@/types"
 import { logger } from "./logger"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 /**
  * Health Check Component
@@ -71,7 +72,7 @@ export function HealthCheck() {
         return (
           <Badge className="bg-yellow-100 text-yellow-800 border-yellow-300">
             <AlertTriangle className="h-3 w-3 mr-1" />
-            Degraded
+            Degraded {status.responseTime > 1000 ? "(Slow)" : ""}
           </Badge>
         )
       case "unhealthy":
@@ -132,9 +133,30 @@ export function HealthCheck() {
                   {getStatusBadge(systemStatus.mainApi)}
                 </div>
                 <div className="text-sm text-gray-600">
-                  <div>Response Time: {systemStatus.mainApi.responseTime.toFixed(2)}ms</div>
+                  <div>
+                    Response Time:{" "}
+                    <span className={systemStatus.mainApi.responseTime > 1000 ? "text-orange-500 font-medium" : ""}>
+                      {systemStatus.mainApi.responseTime.toFixed(2)}ms
+                    </span>
+                  </div>
                   <div className="truncate">{systemStatus.mainApi.message}</div>
                 </div>
+
+                {/* Additional reliability indicators */}
+                {systemStatus.mainApi.status !== "healthy" && (
+                  <div className="mt-2 pt-2 border-t border-gray-200">
+                    <div className="text-xs font-medium text-gray-500 mb-1">What this means:</div>
+                    {systemStatus.mainApi.status === "degraded" ? (
+                      <div className="text-xs text-yellow-600">
+                        Service is responding but might be slow or unreliable. Expect some retries or timeouts.
+                      </div>
+                    ) : (
+                      <div className="text-xs text-red-600">
+                        Service is unavailable. Dispatch operations will fail until the API recovers.
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="bg-gray-50 p-3 rounded-md">
@@ -143,11 +165,56 @@ export function HealthCheck() {
                   {getStatusBadge(systemStatus.autoDispatchApi)}
                 </div>
                 <div className="text-sm text-gray-600">
-                  <div>Response Time: {systemStatus.autoDispatchApi.responseTime.toFixed(2)}ms</div>
+                  <div>
+                    Response Time:{" "}
+                    <span
+                      className={systemStatus.autoDispatchApi.responseTime > 1000 ? "text-orange-500 font-medium" : ""}
+                    >
+                      {systemStatus.autoDispatchApi.responseTime.toFixed(2)}ms
+                    </span>
+                  </div>
                   <div className="truncate">{systemStatus.autoDispatchApi.message}</div>
                 </div>
+
+                {/* Additional reliability indicators */}
+                {systemStatus.autoDispatchApi.status !== "healthy" && (
+                  <div className="mt-2 pt-2 border-t border-gray-200">
+                    <div className="text-xs font-medium text-gray-500 mb-1">What this means:</div>
+                    {systemStatus.autoDispatchApi.status === "degraded" ? (
+                      <div className="text-xs text-yellow-600">
+                        Auto-dispatch is responding but might be slow. Manual dispatch is recommended.
+                      </div>
+                    ) : (
+                      <div className="text-xs text-red-600">
+                        Auto-dispatch is unavailable. Use manual dispatch until the service recovers.
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
+
+            {/* Add new reliability warnings section */}
+            {(systemStatus.mainApi.status !== "healthy" || systemStatus.autoDispatchApi.status !== "healthy") && (
+              <Alert variant={systemStatus.mainApi.status === "unhealthy" ? "destructive" : "warning"} className="mt-2">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>API Reliability Issues Detected</AlertTitle>
+                <AlertDescription>
+                  {systemStatus.mainApi.status === "unhealthy" ? (
+                    <span>
+                      The main API is currently unavailable. Dispatch operations will fail until the API recovers.
+                    </span>
+                  ) : systemStatus.mainApi.status === "degraded" ? (
+                    <span>
+                      The main API is experiencing degraded performance. You may encounter slow responses or occasional
+                      errors.
+                    </span>
+                  ) : (
+                    <span>The auto-dispatch API is experiencing issues. Manual dispatch is recommended.</span>
+                  )}
+                </AlertDescription>
+              </Alert>
+            )}
 
             <div className="text-xs text-gray-500 text-right">
               Last updated: {new Date(systemStatus.lastUpdated).toLocaleTimeString()}

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import type { EmergencyCall, EmergencyStatus, EmergencyType } from "@/types"
 import { EMERGENCY_TYPE_COLORS } from "@/types"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -61,6 +61,24 @@ export function EmergencyPanel({ emergencies, onSelect, selectedEmergency }: Eme
     setPrevEmergencyCount(emergencies.length)
   }, [emergencies, prevEmergencyCount])
 
+  // Add this useEffect right after the existing useEffect for highlighting
+  useEffect(() => {
+    // When emergencies change, ensure UI is updated
+    setPrevEmergencyCount(emergencies.length)
+
+    // If we have a selected emergency, update it with the latest data
+    if (selectedEmergency) {
+      const updatedEmergency = emergencies.find(
+        (e) => e.city === selectedEmergency.city && e.county === selectedEmergency.county,
+      )
+
+      if (updatedEmergency) {
+        // Update the selected emergency without triggering a full selection change
+        onSelect(updatedEmergency)
+      }
+    }
+  }, [emergencies, selectedEmergency, onSelect])
+
   // Generate a unique ID for an emergency
   const getEmergencyId = (emergency: EmergencyCall, index: number) => {
     return `${emergency.city}-${emergency.county}-${index}`
@@ -79,18 +97,18 @@ export function EmergencyPanel({ emergencies, onSelect, selectedEmergency }: Eme
     const total = typeRequests.reduce((sum, req) => sum + req.Quantity, 0)
 
     // Get dispatched count for this type
-    const dispatched = (emergency.dispatched as unknown as Record<EmergencyType, number>)?.[type] || 0
+    const dispatched = (emergency.dispatched as Record<EmergencyType, number>)?.[type] || 0
     const remaining = Math.max(0, total - dispatched)
 
     return { total, dispatched, remaining }
   }
 
   // Calculate overall emergency status (total, dispatched, remaining)
-  const getEmergencyStatus = (emergency: EmergencyCall): EmergencyStatus => {
+  const getEmergencyStatus = useCallback((emergency: EmergencyCall): EmergencyStatus => {
     const total = emergency.requests.reduce((sum, req) => sum + req.Quantity, 0)
 
     // Sum up dispatched counts across all types
-    const dispatched = Object.values((emergency.dispatched as unknown as Record<EmergencyType, number>) || {}).reduce(
+    const dispatched = Object.values((emergency.dispatched as Record<EmergencyType, number>) || {}).reduce(
       (sum, count) => sum + count,
       0,
     )
@@ -98,7 +116,7 @@ export function EmergencyPanel({ emergencies, onSelect, selectedEmergency }: Eme
     const remaining = Math.max(0, total - dispatched)
 
     return { total, dispatched, remaining }
-  }
+  }, [])
 
   // Get status color based on dispatch progress
   const getStatusColor = (status: EmergencyStatus) => {
@@ -113,6 +131,10 @@ export function EmergencyPanel({ emergencies, onSelect, selectedEmergency }: Eme
     return (status.dispatched / status.total) * 100
   }
 
+  // Check if an emergency has a specific type of request
+  const hasEmergencyType = (emergency: EmergencyCall, type: EmergencyType): boolean => {
+    return emergency.requests.some((req) => req.Type === type)
+  }
 
   // Filter emergencies based on selected types
   const filteredEmergencies = emergencies.filter((emergency) => {

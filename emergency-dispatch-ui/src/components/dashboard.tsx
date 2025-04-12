@@ -3,8 +3,10 @@
 import { useEffect, useState, useRef, useCallback } from "react"
 import { LeafletMap } from "./leaflet-map"
 import { EmergencyPanel } from "./emergency-panel"
+import { ResourcePanel } from "./resource-panel"
 import { ControlPanel } from "./control-panel"
 import { StatusPanel } from "./status-panel"
+import { HealthCheck } from "./health-check"
 import type {
   EmergencyResource,
   ControlStatus,
@@ -39,8 +41,11 @@ import { Slider } from "@/components/ui/slider"
 import { Clock, AlertCircle, BarChart3 } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { ResourceStats } from "./resource-stats"
-import { ResourcePanel } from "./resource-panel"
-import { HealthCheck } from "./health-check"
+// Add the ApiPerformance import
+import { ApiPerformance } from "./api-performance"
+// Add the ResourceCache import
+import { ResourceCache } from "@/utils/resource-cache"
+import { ApiErrorMonitor } from "./api-monitor"
 
 export default function Dashboard() {
   const [locations, setLocations] = useState<Location[]>([])
@@ -95,6 +100,7 @@ export default function Dashboard() {
   const [startTime, setStartTime] = useState<Date | null>(null)
   const [elapsedTime, setElapsedTime] = useState("00:00:00")
   const timerRef = useRef<NodeJS.Timeout | null>(null)
+  const autoFetchIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   // Recovery state
   const [recoveryState, setRecoveryState] = useState<{
@@ -204,6 +210,10 @@ export default function Dashboard() {
       // Use type assertion to resolve type conflicts
       setLocations(locationsData as any)
       setResources(resourcesData)
+
+      // Cache the resources for fallback
+      ResourceCache.saveResources(resourcesData)
+
       setResourceStats(resourceStatsData)
       setStatus(statusData)
 
@@ -230,9 +240,20 @@ export default function Dashboard() {
 
       return true
     } catch (err) {
+      // Try to use cached resources if available
+      const cachedResources = ResourceCache.getResources()
+      if (cachedResources && cachedResources.length > 0) {
+        logger.warn("Using cached resources due to API error", {
+          cachedCount: cachedResources.length,
+          error: err,
+        })
+        setResources(cachedResources)
+      }
+
       // Only set error if we're in a running simulation
       if (isSimulationRunning) {
-        const errorMessage = "Failed to fetch data. Please check if the API server is running."
+        const errorMessage =
+          "Failed to fetch data. Using cached data where available. Please check if the API server is running."
         setError(errorMessage)
 
         // Log the error
@@ -254,6 +275,9 @@ export default function Dashboard() {
   const fetchEmergenciesQueue = useCallback(async () => {
     try {
       const emergenciesData = await fetchEmergencyCalls()
+
+      // Cache the emergencies for fallback
+      ResourceCache.saveEmergencies(emergenciesData)
 
       // Update the emergencies state, preserving dispatched counts
       setEmergencies((prevEmergencies) => {
@@ -310,12 +334,24 @@ export default function Dashboard() {
 
       logger.info("Emergencies queue fetched", { count: emergenciesData.length })
     } catch (err) {
+      // Try to use cached emergencies if available
+      const cachedEmergencies = ResourceCache.getEmergencies()
+      if (cachedEmergencies && cachedEmergencies.length > 0) {
+        logger.warn("Using cached emergencies due to API error", {
+          cachedCount: cachedEmergencies.length,
+          error: err,
+        })
+
+        setEmergencies(cachedEmergencies)
+        setEmergencyStats(calculateEmergencyStats(cachedEmergencies))
+      }
+
       logger.error("Failed to fetch emergencies queue", { error: err })
 
       // Only show toast if we're in a running simulation
       if (isSimulationRunning) {
         toast.error("Error", {
-          description: "Failed to fetch emergencies queue. The server may be unavailable.",
+          description: "Failed to fetch emergencies queue. Using cached data where available.",
           duration: 3000,
         })
       }
@@ -433,24 +469,31 @@ export default function Dashboard() {
 
   // Auto-fetch emergencies when enabled
   useEffect(() => {
-    let autoFetchIntervalId: NodeJS.Timeout | null = null
+    // Clear any existing interval first
+    if (autoFetchIntervalRef.current) {
+      clearInterval(autoFetchIntervalRef.current)
+      autoFetchIntervalRef.current = null
+    }
 
+    // Only set up auto-fetch if enabled and simulation is running but not in auto dispatch mode
     if (autoFetchEnabled && isSimulationRunning && !isAutoDispatch) {
-      // Clear any existing interval
-      if (autoFetchInterval) {
-        clearInterval(autoFetchInterval)
-      }
+      logger.info("Setting up auto-fetch interval", {
+        intervalSeconds: autoFetchSeconds,
+      })
 
       // Set up new interval to check and fetch emergencies
-      const interval = setInterval(async () => {
+      const autoFetch = async () => {
         try {
           // Check current status
           const statusData = await fetchControlStatus()
 
           // Stop auto-fetch if simulation is no longer running
           if (!statusData || statusData.status !== "Running") {
-            clearInterval(interval)
-            setAutoFetchInterval(null)
+            if (autoFetchIntervalRef.current) {
+              clearInterval(autoFetchIntervalRef.current)
+              autoFetchIntervalRef.current = null
+            }
+            // Use a callback to update state to avoid dependency issues
             setAutoFetchEnabled(false)
             return
           }
@@ -478,29 +521,19 @@ export default function Dashboard() {
             duration: 3000,
           })
         }
-      }, autoFetchSeconds * 1000) // Use the user-configured interval
-
-      setAutoFetchInterval(interval)
-      autoFetchIntervalId = interval
-
-      return () => {
-        if (autoFetchIntervalId) {
-          clearInterval(autoFetchIntervalId)
-        }
       }
-    } else if (autoFetchInterval) {
-      // Clean up interval if auto-fetch is disabled
-      clearInterval(autoFetchInterval)
-      setAutoFetchInterval(null)
+
+      autoFetchIntervalRef.current = setInterval(autoFetch, autoFetchSeconds * 1000) // Use the user-configured interval
     }
-  }, [
-    autoFetchEnabled,
-    isSimulationRunning,
-    isAutoDispatch,
-    fetchEmergenciesQueue,
-    autoFetchSeconds,
-    autoFetchInterval,
-  ])
+
+    // Clean up function
+    return () => {
+      if (autoFetchIntervalRef.current) {
+        clearInterval(autoFetchIntervalRef.current)
+        autoFetchIntervalRef.current = null
+      }
+    }
+  }, [autoFetchEnabled, isSimulationRunning, isAutoDispatch, autoFetchSeconds, fetchEmergenciesQueue])
 
   // Save simulation state to localStorage
   const saveSimulationState = useCallback(
@@ -730,22 +763,27 @@ export default function Dashboard() {
 
     // Update the dispatched count for the selected emergency
     if (selectedEmergency) {
-      setSelectedEmergency((prev) => {
-        if (!prev) return null
+      const updatedEmergency = {
+        ...selectedEmergency,
+        dispatched: {
+          ...(selectedEmergency.dispatched as Record<EmergencyType, number>),
+          [type]: ((selectedEmergency.dispatched as Record<EmergencyType, number>)[type] || 0) + quantity,
+        },
+      }
 
-        // Create a new dispatched object with updated count for this type
-        const updatedDispatched = { ...(prev.dispatched as Record<EmergencyType, number>) }
-        updatedDispatched[type] = (updatedDispatched[type] || 0) + quantity
+      setSelectedEmergency(updatedEmergency)
 
-        return {
-          ...prev,
-          dispatched: updatedDispatched,
-        }
-      })
+      // Update the emergency in cache
+      ResourceCache.updateEmergencyInCache(updatedEmergency)
     }
 
     // Update the resource quantity in the resources list
     if (selectedResource) {
+      const updatedResource = {
+        ...selectedResource,
+        quantity: selectedResource.quantity - quantity,
+      }
+
       setResources((prevResources) => {
         return prevResources.map((resource) => {
           if (
@@ -753,14 +791,17 @@ export default function Dashboard() {
             resource.county === selectedResource.county &&
             resource.type === selectedResource.type
           ) {
-            return {
-              ...resource,
-              quantity: resource.quantity - quantity,
-            }
+            return updatedResource
           }
           return resource
         })
       })
+
+      // Update the selected resource to reflect the new quantity
+      setSelectedResource(updatedResource)
+
+      // Update the resource in cache
+      ResourceCache.updateResourceInCache(updatedResource)
     }
 
     // Update the emergencies list to reflect the dispatch
@@ -782,7 +823,23 @@ export default function Dashboard() {
       // Update emergency statistics
       setEmergencyStats(calculateEmergencyStats(updatedEmergencies))
 
+      // Update emergencies in cache
+      ResourceCache.saveEmergencies(updatedEmergencies)
+
       return updatedEmergencies
+    })
+
+    // Update resource stats to reflect the dispatch
+    setResourceStats((prevStats) => {
+      return prevStats.map((stat) => {
+        if (stat.type === type) {
+          return {
+            ...stat,
+            available: Math.max(0, stat.available - quantity),
+          }
+        }
+        return stat
+      })
     })
 
     // Save updated state to localStorage
@@ -977,14 +1034,14 @@ export default function Dashboard() {
       if (timerRef.current) {
         clearInterval(timerRef.current)
       }
-      if (autoFetchInterval) {
-        clearInterval(autoFetchInterval)
+      if (autoFetchIntervalRef.current) {
+        clearInterval(autoFetchIntervalRef.current)
       }
       if (statusRefreshInterval) {
         clearInterval(statusRefreshInterval)
       }
     }
-  }, [clearSimulationState, handleReset, refreshInterval, autoFetchInterval, statusRefreshInterval])
+  }, [clearSimulationState, handleReset, refreshInterval, statusRefreshInterval])
 
   // Create a local status object that includes our tracked metrics
   const localStatus = status
@@ -1035,6 +1092,9 @@ export default function Dashboard() {
       {showHealthCheck && (
         <div className="p-4">
           <HealthCheck />
+          <div className="mt-4">
+            <ApiPerformance />
+          </div>
         </div>
       )}
 
@@ -1129,16 +1189,20 @@ export default function Dashboard() {
                       </div>
                       <div className="flex items-center space-x-2">
                         <span className="text-xs">1s</span>
-                        <Slider
-                          id="auto-fetch-interval"
-                          value={[autoFetchSeconds]}
-                          min={1}
-                          max={30}
-                          step={1}
-                          onValueChange={(value) => setAutoFetchSeconds(value[0])}
-                          disabled={!autoFetchEnabled}
-                          className="flex-1"
-                        />
+                        <div className="flex-1">
+                          <Slider
+                            id="auto-fetch-interval"
+                            defaultValue={[autoFetchSeconds]}
+                            min={1}
+                            max={30}
+                            step={1}
+                            onValueCommit={(value) => {
+                              // Only update when the user finishes dragging
+                              setAutoFetchSeconds(value[0])
+                            }}
+                            disabled={!autoFetchEnabled}
+                          />
+                        </div>
                         <span className="text-xs">30s</span>
                       </div>
 
@@ -1189,6 +1253,7 @@ export default function Dashboard() {
             </TabsContent>
           </Tabs>
         </div>
+        <ApiErrorMonitor />
       </main>
     </div>
   )
