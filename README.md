@@ -65,7 +65,6 @@ status_interval – Interval between status checks to the backend
 Code Structure
 
 Files
-
 api.py – REST API for launching the simulation (single-type)
 api_stage3.py – REST API for multi-type emergencies (Stage 3)
 api_stage4.py – Advanced API handling and KDTree with live supply refresh
@@ -93,3 +92,236 @@ Query the KDTree with the emergency's (lat, lon)
 Get sorted indices of closest points
 Use supply_keys[idx] to find the real-world location
 This structure ensures each KDTree index can be mapped directly to a supply record.
+
+
+UI Documentation
+This document outlines how to use the core UI components used across the Emercery system, including tabs, inputs, dropdowns, cards, badges, alerts, buttons, theme providers, and panels.
+
+🔘 Button
+
+Reusable button component with Tailwind + variant support.
+
+<Button variant="default" size="sm">Click Me</Button>
+
+Props:
+variant: default | destructive | outline | secondary | ghost | link
+size: default | sm | lg | icon
+asChild: renders as a child component instead of <button>
+📋 Input
+Styled input component with consistent spacing and focus states.
+<Input placeholder="Search..." type="text" />
+🧭 Tabs
+Radix-based tab system.
+
+<Tabs defaultValue="account">
+  <TabsList>
+    <TabsTrigger value="account">Account</TabsTrigger>
+    <TabsTrigger value="settings">Settings</TabsTrigger>
+  </TabsList>
+  <TabsContent value="account">Account Info</TabsContent>
+  <TabsContent value="settings">Settings Info</TabsContent>
+</Tabs>
+🧾 DropdownMenu
+Advanced dropdown system using Radix primitives with nested, radio, and checkbox support.
+<DropdownMenu>
+  <DropdownMenuTrigger asChild>
+    <Button>Open</Button>
+  </DropdownMenuTrigger>
+  <DropdownMenuContent>
+    <DropdownMenuLabel>Actions</DropdownMenuLabel>
+    <DropdownMenuItem>Refresh</DropdownMenuItem>
+    <DropdownMenuSeparator />
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>Sort by</DropdownMenuSubTrigger>
+      <DropdownMenuSubContent>
+        <DropdownMenuRadioGroup value="name">
+          <DropdownMenuRadioItem value="name">Name</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
+  </DropdownMenuContent>
+</DropdownMenu>
+🗂 Card System
+Composed of multiple semantic parts for consistent layout.
+<Card>
+  <CardHeader>
+    <CardTitle>Title</CardTitle>
+    <CardDescription>Optional description</CardDescription>
+    <CardAction><Button>...</Button></CardAction>
+  </CardHeader>
+  <CardContent>...</CardContent>
+  <CardFooter>...</CardFooter>
+</Card>
+🏷 Badge
+Minimal tag-like indicators.
+<Badge variant="default">Active</Badge>
+Variants: default, secondary, destructive, outline
+⚠️ Alert
+For inline warning, error, info, or success messages.
+<Alert variant="warning">
+  <AlertTitle>Low Resources</AlertTitle>
+  <AlertDescription>This unit is low on supply.</AlertDescription>
+</Alert>
+Variants: default, destructive, warning, info, success
+🎨 ThemeProvider
+Wraps the entire application to support light/dark mode via next-themes.
+<ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+  <App />
+</ThemeProvider>
+🧪 StatusPanel
+Live-updating panel that reflects the real-time simulation status.
+Props:
+status: ControlStatus
+isLoading: boolean
+error: string | null
+Features:
+Auto-refresh logic
+Manual refresh
+Countdown display
+Summary + advanced simulation metrics
+🗺 Map
+Full-featured map component for visualizing resources and emergencies.
+Key Features:
+Emergency/resource markers with dynamic icons
+Auto-bounding and zoom
+Filterable resources by type
+Distance lines and popups
+Nearby resource detection on click
+Props: See full documentation in map.tsx.
+🚑 ResourcePanel
+Side panel for filtering, selecting, and dispatching resources.
+Key Features:
+Type filters with badge counters
+Sort + advanced filters
+Emergency suggestions
+Dispatch control
+Props:
+resources, onSelect, selectedResource, selectedEmergency, onDispatchSuccess
+
+
+UI & Frontend Flow and Architecture
+File Structure Overview
+
+The frontend is structured using feature-based organization with reusable UI components. Here's a high-level map:
+/components/
+  └── ui/
+      ├── button.tsx
+      ├── card.tsx
+      ├── input.tsx
+      ├── badge.tsx
+      ├── alert.tsx
+      ├── dropdown-menu.tsx
+      ├── tabs.tsx
+      └── progress.tsx
+
+/app/
+  ├── dashboard/
+  │   ├── debug-panel.tsx
+  │   ├── status-panel.tsx
+  │   ├── resource-panel.tsx
+  │   └── map.tsx
+  ├── layout.tsx
+  └── page.tsx
+
+/lib/
+  └── utils.ts
+
+/services/
+  └── api.ts
+
+/types/
+  └── index.ts
+
+  
+Component Communication Flow
+Core Pages:
+dashboard/page.tsx is the entry point that composes:
+<StatusPanel />
+<Map />
+<ResourcePanel />
+<DebugPanel />
+
+State & Props Flow:
+StatusPanel tracks and auto-refreshes the simulation control status.
+Map displays emergencies and resources, manages map interactions, and handles click-based exploration.
+ResourcePanel allows filtering, selecting, and dispatching resources. It:
+Receives selectedEmergency from parent.
+Sends onDispatchSuccess and onSelect(resource) callbacks.
+DebugPanel accesses and manages in-memory logs from logger.ts.
+Utility & API Layers:
+services/api.ts centralizes backend communication (e.g., dispatchResource, fetchControlStatus).
+utils/distance.ts handles logic like Haversine formula to calculate distance.
+logger.ts is a custom in-memory logging system used across the frontend.
+
+🧱 Why It's Scalable
+1. Componentized UI
+UI elements (Button, Card, Tabs, Input, etc.) are reusable and themed with Tailwind + class-variance-authority.
+New pages or panels can be composed rapidly using these building blocks.
+2. Separation of Concerns
+API logic is isolated in services/api.ts.
+Utility logic is in utils/.
+UI logic is cleanly separated into dumb and smart components.
+3. Type Safety & Predictability
+All major data types (EmergencyCall, EmergencyResource, etc.) are defined in /types.
+Props are typed explicitly in components, which improves reliability and autocompletion.
+4. Radix UI + Controlled State
+Interactive components like Tabs and DropdownMenu use Radix primitives, making them accessible and flexible.
+5. Future-Proofing for Features
+Modular enough to:
+Add WebSocket/Live updates in StatusPanel
+Add map layers or overlays in Map
+Integrate analytics or session recording in DebugPanel
+Persist settings or filters via URL or localStorage
+6. Developer Ergonomics
+The UI codebase is intuitive, well-named, and easy to test or mock.
+Logs can be exported via the debug panel.
+
+🧩 How to Extend
+Add a SettingsPanel using the same Card layout.
+Extend Map to show live vehicle paths.
+Use the DropdownMenu for profile and simulation configuration options.
+Integrate otifications using Alert.
+Core Pages:
+dashboard/page.tsx is the entry point that composes:
+<StatusPanel />
+<Map />
+<ResourcePanel />
+<DebugPanel />
+State & Props Flow:
+StatusPanel tracks and auto-refreshes the simulation control status.
+Map displays emergencies and resources, manages map interactions, and handles click-based exploration.
+ResourcePanel allows filtering, selecting, and dispatching resources. It:
+Receives selectedEmergency from parent.
+Sends onDispatchSuccess and onSelect(resource) callbacks.
+DebugPanel accesses and manages in-memory logs from logger.ts.
+Utility & API Layers:
+services/api.ts centralizes backend communication (e.g., dispatchResource, fetchControlStatus).
+utils/distance.ts handles logic like Haversine formula to calculate distance.
+logger.ts is a custom in-memory logging system used across the frontend.
+🧱 Why It's Scalable
+1. Componentized UI
+UI elements (Button, Card, Tabs, Input, etc.) are reusable and themed with Tailwind + class-variance-authority.
+New pages or panels can be composed rapidly using these building blocks.
+2. Separation of Concerns
+API logic is isolated in services/api.ts.
+Utility logic is in utils/.
+UI logic is cleanly separated into dumb and smart components.
+3. Type Safety & Predictability
+All major data types (EmergencyCall, EmergencyResource, etc.) are defined in /types.
+Props are typed explicitly in components, which improves reliability and autocompletion.
+4. Radix UI + Controlled State
+Interactive components like Tabs and DropdownMenu use Radix primitives, making them accessible and flexible.
+5. Future-Proofing for Features
+Modular enough to:
+Add WebSocket/Live updates in StatusPanel
+Add map layers or overlays in Map
+Integrate analytics or session recording in DebugPanel
+Persist settings or filters via URL or localStorage
+6. Developer Ergonomics
+The UI codebase is intuitive, well-named, and easy to test or mock.
+Logs can be exported via the debug panel.
+🧩 How to Extend
+Add a SettingsPanel using the same Card layout.
+Extend Map to show live vehicle paths.
+Use the DropdownMenu for profile and simulation configuration options.
+Integrate notifications using Alert.
