@@ -4,9 +4,13 @@ THE FOLLOWING DOCUMENTATION WILL CONTAIN:
 - STAGE 1 -> INFORMATION SPECIFICALLY TAILORED TO MEET THE GIVEN REQUIREMENTS FROM "https://distancify.com/hackathon-2025-submit"
 - STAGE 2 -> GENERAL APP INFORMATION
 
-  STAGE 1:
-  
 
+STAGE 1:
+UI MODULE Documentation
+The UI is a modular, scalable system based on React (with Next.js), Tailwind CSS, and Radix UI primitives. It separates concerns through components and services to enable clean integration and flexible updates.
+Hybrid Automation: Most UI actions (dispatching, refreshing, fetching) are powered by API calls but allow manual control and overrides.
+The user can choose to send units to emergencies tehmselves one by one, and even though they are provided with a reccomendation based on the most optimal suggeston, they can still choose with unit tackles the desired emergency mannualy.
+The application also has alternatives for automating this process:
 
 
 STAGE 2:
