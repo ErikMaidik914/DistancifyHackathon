@@ -9,8 +9,11 @@ STAGE 1:
 UI MODULE Documentation
 The UI is a modular, scalable system based on React (with Next.js), Tailwind CSS, and Radix UI primitives. It separates concerns through components and services to enable clean integration and flexible updates.
 Hybrid Automation: Most UI actions (dispatching, refreshing, fetching) are powered by API calls but allow manual control and overrides.
-The user can choose to send units to emergencies tehmselves one by one, and even though they are provided with a reccomendation based on the most optimal suggeston, they can still choose with unit tackles the desired emergency mannualy.
-The application also has alternatives for automating this process:
+
+The user can choose to send units to emergencies tehmselves one by one, by clicking the "Start Simulation Button" and select input parameters for targetdispatches and max active calls. After that they can choose for stage 1 to enable auto-fetching at a desired time interval so that they dont have to mannually select the next emergency. Then they can look in teh emergency list to see the place(city and county), the cathergory(medical, fire,police, rescue, utility) and the amount of units needed to be dispatched there(eg. 2/2 aupdating with each unit sent to 1/2 and 0/2). Below that we have an Available Resources section in which the users can filter the dispatch units by service cathegory(police, medical...) and have a sorted list based on the most efficient options( for stage 1 we do it full stack with our KD-Tree approach for enhanced optimizaion and for the rest of the stages with normal eucladian computations).A fter that the user can dispatch teh unit only if that unit fits the need of the destination and the emergency will be updated. And even though they are provided with a reccomendation based on the most optimal suggeston(with a tag representing the color and tier of efficiency), they can still choose which unitcshall tackle the desired emergency mannualy(for stages 1-3).
+The application also has alternatives for automating this process for stage one:
+a)The user can choose to automate the whole process and run it
+B)Or the user can choose to just fetch emergency calls automatically and manually assing them.
 
 
 STAGE 2:
